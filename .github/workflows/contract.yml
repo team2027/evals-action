@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: "20"
       - name: Install devDeps
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-fund
       - name: Run contract tests against live OpenAPI spec
         env:
           OPENAPI_SPEC_URL: ${{ vars.OPENAPI_SPEC_URL || 'https://2027.dev/evals/api/openapi' }}
