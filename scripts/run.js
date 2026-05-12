@@ -378,7 +378,28 @@ module.exports = async function run({ core, github, context }) {
     last = current
     promptTitle = (current.prompt && current.prompt.title) || promptTitle
     const status = current.status
-    if (status === "completed" || status === "failed" || status === "superseded") break
+    if (status === "completed" || status === "failed" || status === "superseded") {
+      // Race window: the queue writes eval_runs.status='completed' before it
+      // back-fills reportSlug from the upload pipeline. If we caught the run
+      // mid-handoff, do a few short grace polls so we can render the report
+      // link instead of the API-only status page. Tracked in team2027/evals#136.
+      if (status === "completed" && !current.report && !current.failureReason) {
+        const GRACE_POLLS = 3
+        const GRACE_INTERVAL_MS = 5000
+        core.info("status=completed but report not yet linked — grace-polling for back-fill...")
+        for (let i = 0; i < GRACE_POLLS; i++) {
+          await sleep(GRACE_INTERVAL_MS)
+          try {
+            const retry = await getJson(runUrl, apiKey)
+            last = retry
+            if (retry.report || retry.failureReason) break
+          } catch (e) {
+            core.warning(`grace-period poll failed (ignoring): ${e.message}`)
+          }
+        }
+      }
+      break
+    }
   }
 
   const finalStatus = (last && last.status) || "pending"
