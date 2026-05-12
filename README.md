@@ -80,7 +80,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: team2027/evals-action@v0.1.0
+      - uses: team2027/evals-action@v0.2.0
         with:
           api-key: ${{ secrets.EVALS_API_KEY }}
           prompt-id: 12345678-1234-1234-1234-1234567890ab
@@ -104,7 +104,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: team2027/evals-action@v0.1.0
+      - uses: team2027/evals-action@v0.2.0
         with:
           api-key: ${{ secrets.EVALS_API_KEY }}
           prompt-id: 12345678-1234-1234-1234-1234567890ab
@@ -132,7 +132,7 @@ jobs:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
           vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-      - uses: team2027/evals-action@v0.1.0
+      - uses: team2027/evals-action@v0.2.0
         with:
           api-key: ${{ secrets.EVALS_API_KEY }}
           prompt-id: 12345678-1234-1234-1234-1234567890ab

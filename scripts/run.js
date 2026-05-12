@@ -21,6 +21,12 @@ function truncate(str, max) {
   return `${s.slice(0, max - 3)}...`
 }
 
+// Commit-status descriptions are single-line; collapse any whitespace runs
+// (incl. newlines from server failure reasons) before truncating.
+function singleLine(str) {
+  return String(str || "").replace(/\s+/g, " ").trim()
+}
+
 function deriveContext(promptTitle, promptId) {
   const slugSource = promptTitle || promptId || "eval"
   const slug = String(slugSource)
@@ -63,6 +69,28 @@ async function postJson(url, apiKey, body) {
   return parsed
 }
 
+// Retry POSTs on transient 5xx / network errors. 4xx fails immediately so a
+// bad config (e.g. wrong promptId) doesn't sit retrying.
+async function postJsonWithRetry(url, apiKey, body, { attempts = 3, baseDelayMs = 1000, core } = {}) {
+  let lastErr
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await postJson(url, apiKey, body)
+    } catch (e) {
+      lastErr = e
+      const transient = e instanceof HttpStatusError ? e.status >= 500 : true
+      if (!transient || i === attempts - 1) throw e
+      const retryAfter = Number(e.retryAfter)
+      const delay = Number.isFinite(retryAfter) && retryAfter > 0
+        ? retryAfter * 1000
+        : baseDelayMs * 2 ** i
+      core?.warning(`POST retry ${i + 1}/${attempts - 1} after ${Math.round(delay)}ms: ${e.message}`)
+      await sleep(delay)
+    }
+  }
+  throw lastErr
+}
+
 async function getJson(url, apiKey) {
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${apiKey}` },
@@ -82,8 +110,9 @@ async function getJson(url, apiKey) {
   return parsed
 }
 
-async function findStickyComment(github, owner, repo, prNumber, marker) {
-  for (let page = 1; page < 10; page++) {
+async function findStickyComment(github, owner, repo, prNumber, marker, core) {
+  const MAX_PAGES = 10
+  for (let page = 1; page <= MAX_PAGES; page++) {
     const { data } = await github.rest.issues.listComments({
       owner,
       repo,
@@ -93,14 +122,19 @@ async function findStickyComment(github, owner, repo, prNumber, marker) {
     })
     const found = data.find((c) => c.body && c.body.includes(marker))
     if (found) return found
-    if (data.length < 100) break
+    if (data.length < 100) return null
+    if (page === MAX_PAGES) {
+      core?.warning(
+        `sticky-comment scan hit ${MAX_PAGES * 100}-comment cap without finding marker — will create a duplicate comment`,
+      )
+    }
   }
   return null
 }
 
-async function upsertComment(github, owner, repo, prNumber, marker, body) {
+async function upsertComment(github, owner, repo, prNumber, marker, body, core) {
   const fullBody = body.includes(marker) ? body : `${marker}\n${body}`
-  const existing = await findStickyComment(github, owner, repo, prNumber, marker)
+  const existing = await findStickyComment(github, owner, repo, prNumber, marker, core)
   if (existing) {
     await github.rest.issues.updateComment({
       owner,
@@ -125,7 +159,7 @@ async function setCommitStatus(github, owner, repo, sha, params) {
     repo,
     sha,
     state: params.state,
-    description: truncate(params.description || "", STATUS_DESC_MAX),
+    description: truncate(singleLine(params.description), STATUS_DESC_MAX),
     target_url: params.targetUrl,
     context: params.context,
   })
@@ -185,6 +219,7 @@ function extractPrFromContext(context) {
       title: pr.title,
       branch: pr.head && pr.head.ref,
       sha: pr.head && pr.head.sha,
+      headRepoFullName: pr.head && pr.head.repo && pr.head.repo.full_name,
     }
   }
   if (context.payload && context.payload.deployment_status && context.payload.deployment) {
@@ -194,9 +229,10 @@ function extractPrFromContext(context) {
       title: undefined,
       branch: d.ref,
       sha: d.sha,
+      headRepoFullName: undefined,
     }
   }
-  return { number: undefined, title: undefined, branch: undefined, sha: context.sha }
+  return { number: undefined, title: undefined, branch: undefined, sha: context.sha, headRepoFullName: undefined }
 }
 
 async function lookupPrBySha(github, owner, repo, sha) {
@@ -209,6 +245,7 @@ async function lookupPrBySha(github, owner, repo, sha) {
       title: open.title,
       branch: open.head && open.head.ref,
       sha: open.head && open.head.sha,
+      headRepoFullName: open.head && open.head.repo && open.head.repo.full_name,
     }
   } catch (e) {
     return null
@@ -221,7 +258,9 @@ module.exports = async function run({ core, github, context }) {
   const promptId = process.env.EVALS_PROMPT_ID || undefined
   const urlMapRaw = process.env.EVALS_URL_MAP || ""
   const explicitDeploymentUrl = process.env.EVALS_DEPLOYMENT_URL || ""
-  const waitTimeoutMin = Number(process.env.EVALS_WAIT_TIMEOUT_MINUTES || "5")
+  // Defaults here must match action.yml — they're only used if the script is
+  // invoked outside the composite step (rare, but worth keeping consistent).
+  const waitTimeoutMin = Number(process.env.EVALS_WAIT_TIMEOUT_MINUTES || "20")
   const pollIntervalS = Number(process.env.EVALS_POLL_INTERVAL_SECONDS || "20")
   const timeoutFails = String(process.env.EVALS_TIMEOUT_FAILS || "false").toLowerCase() === "true"
   const skipComment = String(process.env.EVALS_SKIP_COMMENT || "false").toLowerCase() === "true"
@@ -237,17 +276,12 @@ module.exports = async function run({ core, github, context }) {
     core.setFailed("prompt-id input is required")
     return
   }
-
-  // Fork detection — GITHUB_TOKEN is read-only on PRs from forks, so
-  // comment + status writes will 403. Bail before burning eval budget.
-  const headRepoFullName = context.payload?.pull_request?.head?.repo?.full_name
-  const baseRepoFullName = `${context.repo.owner}/${context.repo.repo}`
-  if (headRepoFullName && headRepoFullName !== baseRepoFullName) {
-    core.warning(
-      `PR is from a fork (${headRepoFullName} → ${baseRepoFullName}). GITHUB_TOKEN is read-only on forked PRs and cannot post comments or commit statuses. ` +
-        `Use a 'pull_request_target' trigger (carefully — runs with full secrets), or skip with: ` +
-        `\`if: github.event.pull_request.head.repo.full_name == github.repository\`. Exiting without starting an eval.`,
-    )
+  if (!Number.isFinite(waitTimeoutMin) || waitTimeoutMin <= 0) {
+    core.setFailed(`wait-timeout-minutes must be a positive number (got '${process.env.EVALS_WAIT_TIMEOUT_MINUTES}')`)
+    return
+  }
+  if (!Number.isFinite(pollIntervalS) || pollIntervalS <= 0) {
+    core.setFailed(`poll-interval-seconds must be a positive number (got '${process.env.EVALS_POLL_INTERVAL_SECONDS}')`)
     return
   }
 
@@ -296,11 +330,25 @@ module.exports = async function run({ core, github, context }) {
     return
   }
 
+  // Fork detection — GITHUB_TOKEN is read-only on PRs from forks, so comment
+  // + status writes will 403. Bail before burning eval budget. This runs
+  // after PR resolution so deployment_status events (which don't carry
+  // head-repo info in the payload) are also covered via lookupPrBySha.
+  const baseRepoFullName = `${owner}/${repo}`
+  if (prInfo.headRepoFullName && prInfo.headRepoFullName !== baseRepoFullName) {
+    core.warning(
+      `PR is from a fork (${prInfo.headRepoFullName} → ${baseRepoFullName}). GITHUB_TOKEN is read-only on forked PRs and cannot post comments or commit statuses. ` +
+        `Use a 'pull_request_target' trigger (carefully — runs with full secrets), or skip with: ` +
+        `\`if: github.event.pull_request.head.repo.full_name == github.repository\`. Exiting without starting an eval.`,
+    )
+    return
+  }
+
   const startUrl = `${apiBase}/api/v1/prompts/${encodeURIComponent(promptId)}/run`
   core.info(`starting eval at ${startUrl}`)
   let started
   try {
-    started = await postJson(startUrl, apiKey, { urlMap })
+    started = await postJsonWithRetry(startUrl, apiKey, { urlMap }, { core })
   } catch (e) {
     core.setFailed(`failed to start eval: ${e.message}`)
     return
@@ -340,6 +388,7 @@ module.exports = async function run({ core, github, context }) {
       prNumber,
       marker,
       renderComment({ status: "pending", promptTitle, statusUrl, report: null, failureReason: null }),
+      core,
     )
   }
   if (!skipStatus) {
@@ -357,7 +406,12 @@ module.exports = async function run({ core, github, context }) {
   const MAX_BACKOFF_SEC = 60
 
   while (Date.now() < deadline) {
-    await sleep(jitter(backoffSec * 1000))
+    // Cap sleep at remaining-time so we don't burn past the deadline on a
+    // single long backoff (especially after a Retry-After bump).
+    const remainingMs = deadline - Date.now()
+    const sleepMs = Math.min(jitter(backoffSec * 1000), Math.max(0, remainingMs))
+    await sleep(sleepMs)
+    if (Date.now() >= deadline) break
     let current
     try {
       current = await getJson(runUrl, apiKey)
@@ -423,7 +477,7 @@ module.exports = async function run({ core, github, context }) {
   if (finalStatus === "completed" || finalStatus === "failed" || finalStatus === "superseded") {
     if (!skipComment) {
       const body = renderComment({ status: finalStatus, promptTitle, statusUrl, report, failureReason })
-      await upsertComment(github, owner, repo, prNumber, marker, body)
+      await upsertComment(github, owner, repo, prNumber, marker, body, core)
     }
     if (!skipStatus) {
       const cs = renderCommitStatus({ status: finalStatus, statusUrl, report, failureReason })
@@ -442,7 +496,7 @@ module.exports = async function run({ core, github, context }) {
   // timeout — still running. Keep PR check unblocked unless timeout-fails=true.
   if (!skipComment) {
     const timeoutBody = renderComment({ status: "running", promptTitle, statusUrl, report: null, failureReason: null })
-    await upsertComment(github, owner, repo, prNumber, marker, timeoutBody)
+    await upsertComment(github, owner, repo, prNumber, marker, timeoutBody, core)
   }
   const timeoutState = timeoutFails ? "failure" : "success"
   const timeoutDescription = timeoutFails
