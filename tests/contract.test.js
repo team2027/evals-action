@@ -9,7 +9,17 @@
 const test = require("node:test")
 const assert = require("node:assert/strict")
 const OpenAPISampler = require("openapi-sampler")
-const { renderComment, renderCommitStatus, formatDelta, renderTestedLine, deriveDashboardUrl } = require("../scripts/run.js")
+const {
+  renderComment,
+  renderCommitStatus,
+  formatDelta,
+  renderTestedLine,
+  deriveDashboardUrl,
+  renderMetricsLine,
+  formatSecondsDelta,
+  formatCostDelta,
+  formatCountDelta,
+} = require("../scripts/run.js")
 
 const SPEC_URL = process.env.OPENAPI_SPEC_URL || "https://2027.dev/evals/api/openapi"
 
@@ -195,6 +205,45 @@ test("renderTestedLine survives malformed input", () => {
     renderTestedLine('{"acme.com":"https://x.fly.dev"}'),
     "Tested: acme.com → x.fly.dev",
   )
+})
+
+test("formatSecondsDelta / formatCostDelta / formatCountDelta are defensive", () => {
+  assert.equal(formatSecondsDelta(0), null)
+  assert.equal(formatSecondsDelta(NaN), null)
+  assert.equal(formatSecondsDelta(12), "+12s")
+  assert.equal(formatSecondsDelta(-65), "-1m 5s")
+  assert.equal(formatSecondsDelta(120), "+2m")
+  assert.equal(formatCostDelta(0), null)
+  assert.equal(formatCostDelta(0.001), null) // sub-half-cent ignored
+  assert.equal(formatCostDelta(0.03), "+$0.03")
+  assert.equal(formatCostDelta(-0.12), "-$0.12")
+  assert.equal(formatCountDelta(0), null)
+  assert.equal(formatCountDelta(1), "+1")
+  assert.equal(formatCountDelta(-2), "-2")
+})
+
+test("renderMetricsLine renders only present fields, adds deltas only when both sides have them", () => {
+  const current = {
+    time: "2m 14s", timeSeconds: 134,
+    cost: "$0.12", costUsd: 0.12,
+    errors: 1, interruptions: 0,
+  }
+  const baseline = { timeSeconds: 120, costUsd: 0.15, errors: 0, interruptions: 0 }
+  const line = renderMetricsLine(current, baseline)
+  assert.match(line, /Time: 2m 14s \(\+14s\)/)
+  assert.match(line, /Cost: \$0\.12 \(-\$0\.03\)/)
+  assert.match(line, /Errors: 1 \(\+1\)/)
+  assert.match(line, /Interruptions: 0/) // no delta annotation since 0-0
+  assert.equal(line.includes("Interruptions: 0 ("), false, "zero-delta interruptions shouldn't render (+0)")
+
+  // Without baseline: just values, no deltas.
+  const onlyCurrent = renderMetricsLine(current, null)
+  assert.match(onlyCurrent, /Time: 2m 14s/)
+  assert.equal(onlyCurrent.includes("("), false, "no baseline → no parens")
+
+  // Missing current → null result.
+  assert.equal(renderMetricsLine(null, baseline), null)
+  assert.equal(renderMetricsLine({}, baseline), null)
 })
 
 test("deriveDashboardUrl strips trailing slash before report-slug strip", () => {

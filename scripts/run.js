@@ -205,6 +205,75 @@ function renderTestedLine(urlMapRaw) {
   return `Tested: ${parts.join(", ")}`
 }
 
+function formatSecondsDelta(seconds) {
+  if (!Number.isFinite(seconds) || seconds === 0) return null
+  const abs = Math.abs(seconds)
+  let display
+  if (abs >= 60) {
+    const m = Math.floor(abs / 60)
+    const s = Math.round(abs % 60)
+    display = s > 0 ? `${m}m ${s}s` : `${m}m`
+  } else {
+    display = `${Math.round(abs)}s`
+  }
+  return seconds > 0 ? `+${display}` : `-${display}`
+}
+
+function formatCostDelta(usd) {
+  if (!Number.isFinite(usd) || Math.abs(usd) < 0.005) return null
+  const abs = Math.abs(usd).toFixed(2)
+  return usd > 0 ? `+$${abs}` : `-$${abs}`
+}
+
+function formatCountDelta(n) {
+  if (!Number.isFinite(n) || n === 0) return null
+  return n > 0 ? `+${n}` : String(n)
+}
+
+function renderMetricsLine(current, baseline) {
+  if (!current || typeof current !== "object") return null
+  const parts = []
+
+  if (current.time) {
+    let s = `Time: ${current.time}`
+    if (baseline && typeof current.timeSeconds === "number" && typeof baseline.timeSeconds === "number") {
+      const d = formatSecondsDelta(current.timeSeconds - baseline.timeSeconds)
+      if (d) s += ` (${d})`
+    }
+    parts.push(s)
+  }
+
+  if (current.cost) {
+    let s = `Cost: ${current.cost}`
+    if (baseline && typeof current.costUsd === "number" && typeof baseline.costUsd === "number") {
+      const d = formatCostDelta(current.costUsd - baseline.costUsd)
+      if (d) s += ` (${d})`
+    }
+    parts.push(s)
+  }
+
+  if (typeof current.errors === "number") {
+    let s = `Errors: ${current.errors}`
+    if (baseline && typeof baseline.errors === "number") {
+      const d = formatCountDelta(current.errors - baseline.errors)
+      if (d) s += ` (${d})`
+    }
+    parts.push(s)
+  }
+
+  if (typeof current.interruptions === "number") {
+    let s = `Interruptions: ${current.interruptions}`
+    if (baseline && typeof baseline.interruptions === "number") {
+      const d = formatCountDelta(current.interruptions - baseline.interruptions)
+      if (d) s += ` (${d})`
+    }
+    parts.push(s)
+  }
+
+  if (parts.length === 0) return null
+  return parts.join(" · ")
+}
+
 function deriveDashboardUrl(report, statusUrl) {
   if (report && report.url) {
     return report.url.replace(/\/+$/, "").replace(/\/reports\/[^/]+$/, "")
@@ -266,6 +335,11 @@ function renderComment({ status, promptTitle, statusUrl, report, baseline, failu
       typeof report.score === "number"
     ) {
       lines.push("", formatDelta(report.score - baseline.score))
+    }
+
+    const metricsLine = renderMetricsLine(report && report.metrics, baseline && baseline.metrics)
+    if (metricsLine) {
+      lines.push("", metricsLine)
     }
 
     const tested = renderTestedLine(urlMapRaw)
@@ -354,7 +428,11 @@ async function fetchBaseline(apiBase, apiKey, promptId, currentRunId, core) {
       (r) => r && r.runId !== currentRunId && r.report && typeof r.report.score === "number",
     )
     if (!prior) return null
-    return { score: prior.report.score, grade: prior.report.grade || null }
+    return {
+      score: prior.report.score,
+      grade: prior.report.grade || null,
+      metrics: prior.report.metrics || null,
+    }
   } catch (e) {
     core.warning(`baseline fetch failed (rendering without delta): ${e.message}`)
     return null
@@ -609,6 +687,8 @@ async function run({ core, github, context }) {
   core.setOutput("score", (report && report.score != null) ? String(report.score) : "")
   core.setOutput("grade", (report && report.grade) || "")
   core.setOutput("baseline-score", (baseline && baseline.score != null) ? String(baseline.score) : "")
+  core.setOutput("report-json", report ? JSON.stringify(report) : "")
+  core.setOutput("baseline-json", baseline ? JSON.stringify(baseline) : "")
 
   if (finalStatus === "completed" || finalStatus === "failed" || finalStatus === "superseded") {
     if (!skipComment) {
@@ -662,3 +742,7 @@ module.exports.statusEmoji = statusEmoji
 module.exports.formatDelta = formatDelta
 module.exports.renderTestedLine = renderTestedLine
 module.exports.deriveDashboardUrl = deriveDashboardUrl
+module.exports.renderMetricsLine = renderMetricsLine
+module.exports.formatSecondsDelta = formatSecondsDelta
+module.exports.formatCostDelta = formatCostDelta
+module.exports.formatCountDelta = formatCountDelta

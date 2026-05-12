@@ -170,6 +170,8 @@ jobs:
 | `score` | Final score (0-100) when the run produced a report, empty string otherwise |
 | `grade` | Final letter grade when the run produced a report, empty string otherwise |
 | `baseline-score` | Score of the most recent prior published report for the same prompt, empty string if no baseline |
+| `report-json` | Full report object as stringified JSON (`{slug, url, score, grade, metrics, dimensions}`). Forward-compatible — picks up new API fields without an action release. Empty string when no report. |
+| `baseline-json` | Baseline object as stringified JSON (`{score, grade}`). Empty string when no baseline. |
 
 ### Rendering your own comment
 

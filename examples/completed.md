@@ -1,40 +1,76 @@
-# PR comment formats
+# Completed
 
-All possible outputs of `renderComment` in `scripts/run.js`, rendered against
-realistic inputs. The function dispatches on `status` and degrades gracefully
-when optional fields (`report.score`, `report.grade`, `baseline.score`,
-`failureReason`, `urlMapRaw`) are absent.
+Terminal success state. The comment shape adapts to which fields the API
+returned on `GET /api/v1/runs/:id` and whether a baseline run exists.
 
-Common formatting rules across every branch:
+## Sections (in order, each optional)
 
-- Heading is always `## 2027 AX Eval — <prompt title>` (or `(unknown)` when title missing).
-- SHA is truncated to 7 chars.
-- Sections are separated by blank lines so GitHub renders each as its own paragraph.
-- `Tested:` line only renders inside `completed`. Other branches show the status-page link.
-- Dashboard link is derived by stripping `/reports/<slug>` off the report URL (or `/api/v1/runs/<id>` off the status URL).
+1. Heading
+2. Status line — bold `grade (score/100)` when present, else `Eval complete`
+3. Score delta vs baseline (only when both `score` and `baseline.score` are present)
+4. Metrics line — `Time · Cost · Errors · Interruptions`, with deltas in parens when baseline metrics exist
+5. `Tested:` line — host → preview-host mapping from `url-map`
+6. `Commit:` short SHA
+7. Link row — `[View report →] · [Dashboard]`
 
 ---
 
-## Running / pending
+## Rich: score + baseline + metrics + url-map
 
-Initial poll state — no report yet, links only to the status page.
+The full layout. Everything optional rendered.
 
 ```markdown
 ## 2027 AX Eval — Sign up and create a project
 
-🔄 Running eval
+✅ **B+ (87/100)**
+
++5 pts vs baseline
+
+Time: 2m 14s (+14s) · Cost: $0.12 (-$0.03) · Errors: 1 (+1) · Interruptions: 0
+
+Tested: acme.com → preview-pr-42.fly.dev
 
 Commit: `a1b2c3d`
 
-[Status page →](https://2027.dev/evals/api/v1/runs/abc-123)
+[View report →](https://2027.dev/evals/acme.com/reports/abc123) · [Dashboard](https://2027.dev/evals/acme.com)
+```
+
+Notes on the metrics line:
+
+- `Time` / `Cost` use the API's display strings (`"2m 14s"`, `"$0.12"`).
+- Deltas are computed from `timeSeconds` / `costUsd` (numeric) for accuracy.
+- Sub-half-cent and zero-second deltas are suppressed.
+- `Errors` and `Interruptions` only show a delta when non-zero — `0 → 0` renders as `Interruptions: 0` with no parens.
+
+---
+
+## No baseline — first run for this prompt
+
+The baseline lookup (`GET /api/v1/runs?promptId=…&reportStatus=published&limit=2`)
+returned no prior runs. Delta lines disappear; current-state values still
+render so the metrics line stays informative.
+
+```markdown
+## 2027 AX Eval — Sign up and create a project
+
+✅ **B+ (87/100)**
+
+Time: 2m 14s · Cost: $0.12 · Errors: 1 · Interruptions: 0
+
+Tested: acme.com → preview-pr-42.fly.dev
+
+Commit: `a1b2c3d`
+
+[View report →](https://2027.dev/evals/acme.com/reports/abc123) · [Dashboard](https://2027.dev/evals/acme.com)
 ```
 
 ---
 
-## Completed — rich (score, grade, positive baseline delta)
+## Baseline but no metrics
 
-Full result with grade/score header, baseline delta line, tested-url mapping,
-and a dashboard link derived from the report URL.
+API returned `report.score` / `report.grade` but `report.metrics` is null
+(legacy run, or metrics not yet computed). Score delta still renders;
+metrics line is omitted entirely.
 
 ```markdown
 ## 2027 AX Eval — Sign up and create a project
@@ -52,69 +88,11 @@ Commit: `a1b2c3d`
 
 ---
 
-## Completed — negative delta
+## Minimal fallback — no score / grade
 
-Score lands under the baseline; delta line uses `-N pts vs baseline`.
-
-```markdown
-## 2027 AX Eval — Sign up and create a project
-
-✅ **C (73/100)**
-
--12 pts vs baseline
-
-Tested: acme.com → preview-pr-42.fly.dev
-
-Commit: `a1b2c3d`
-
-[View report →](https://2027.dev/evals/acme.com/reports/abc123) · [Dashboard](https://2027.dev/evals/acme.com)
-```
-
----
-
-## Completed — same as baseline (zero delta), multi-host url-map
-
-When `report.score === baseline.score`, the delta line collapses to a flat
-"Same as baseline". Multi-entry url-map renders all hosts comma-joined.
-
-```markdown
-## 2027 AX Eval — Sign up and create a project
-
-✅ **A- (91/100)**
-
-Same as baseline
-
-Tested: acme.com → preview-pr-42.fly.dev, www.acme.com → www-preview-pr-42.fly.dev
-
-Commit: `a1b2c3d`
-
-[View report →](https://2027.dev/evals/acme.com/reports/abc123) · [Dashboard](https://2027.dev/evals/acme.com)
-```
-
----
-
-## Completed — perfect score, no baseline, no url-map
-
-With baseline and url-map both absent, the comment collapses to header +
-score + commit + links. No delta line, no `Tested:` line.
-
-```markdown
-## 2027 AX Eval — Sign up and create a project
-
-✅ **A+ (100/100)**
-
-Commit: `a1b2c3d`
-
-[View report →](https://2027.dev/evals/acme.com/reports/abc123) · [Dashboard](https://2027.dev/evals/acme.com)
-```
-
----
-
-## Completed — minimal (no score, no grade, no baseline)
-
-Fallback path used when the API returned a report URL but no score/grade
-(e.g. dashboard PR not yet shipped). Header reverts to generic "Eval
-complete" — the rest of the layout is preserved.
+API returned `report.url` but no `score` / `grade` (e.g., older API version,
+or report wasn't scored). The bold header reverts to generic `Eval complete`;
+all the report-link plumbing still renders.
 
 ```markdown
 ## 2027 AX Eval — Sign up and create a project
@@ -130,61 +108,10 @@ Commit: `a1b2c3d`
 
 ---
 
-## Failed — with reason
+## Cross-cutting rules
 
-The server-provided `failureReason` is rendered as its own paragraph between
-the bold "Eval failed" line and the commit line. No truncation in the comment
-(the commit-status check is the only thing that truncates).
-
-```markdown
-## 2027 AX Eval — Sign up and create a project
-
-❌ **Eval failed**
-
-Browser agent timed out on step 4 — could not locate signup form
-
-Commit: `a1b2c3d`
-
-[Status page →](https://2027.dev/evals/api/v1/runs/abc-123)
-```
-
----
-
-## Failed — no reason
-
-When `failureReason` is null/empty, the reason paragraph is omitted entirely.
-
-```markdown
-## 2027 AX Eval — Sign up and create a project
-
-❌ **Eval failed**
-
-Commit: `a1b2c3d`
-
-[Status page →](https://2027.dev/evals/api/v1/runs/abc-123)
-```
-
----
-
-## Superseded
-
-A newer commit triggered a fresh run for the same prompt; this one was
-short-circuited. Uses the `↻` glyph instead of ✅/❌.
-
-```markdown
-## 2027 AX Eval — Sign up and create a project
-
-↻ Eval superseded
-
-Commit: `a1b2c3d`
-
-[Status page →](https://2027.dev/evals/api/v1/runs/abc-123)
-```
-
----
-
-## Unknown status (defensive fallback)
-
-Any `status` value that isn't `completed`, `failed`, `superseded`, `pending`,
-or `running` falls into the running-branch rendering above (same as the
-pending/running format). The renderer never returns undefined.
+- Dashboard URL is derived by trimming `/reports/<slug>` (and any trailing slash) off `report.url`.
+- `Tested:` only renders inside `completed`. Other branches show the API status page.
+- Same-as-baseline (zero score delta) collapses the delta line to "Same as baseline".
+- Negative deltas use `-N pts vs baseline`.
+- Empty `url-map` entries are filtered out before rendering.
