@@ -79,7 +79,7 @@ jobs:
     if: github.event.deployment_status.state == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: team2027/evals-action@v0.1.0
         with:
           api-key: ${{ secrets.EVALS_API_KEY }}
@@ -103,7 +103,7 @@ jobs:
       contains(github.event.context, 'netlify/deploy-preview')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: team2027/evals-action@v0.1.0
         with:
           api-key: ${{ secrets.EVALS_API_KEY }}
@@ -125,7 +125,7 @@ jobs:
   deploy-and-eval:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - id: deploy
         uses: amondnet/vercel-action@v25
         with:
@@ -182,7 +182,7 @@ Set `skip-comment` and/or `skip-status` to `true` and consume the outputs from a
       { "acme.com": "${{ github.event.deployment_status.target_url }}" }
     skip-comment: true
 
-- uses: actions/github-script@v7
+- uses: actions/github-script@v9
   with:
     script: |
       const status = '${{ steps.eval.outputs.final-status }}'

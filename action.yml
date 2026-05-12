@@ -64,7 +64,7 @@ runs:
   using: composite
   steps:
     - name: Run 2027 eval
-      uses: actions/github-script@v7
+      uses: actions/github-script@v9
       env:
         EVALS_API_KEY: ${{ inputs.api-key }}
         EVALS_API_BASE_URL: ${{ inputs.api-base-url }}
