@@ -167,6 +167,9 @@ jobs:
 | `report-slug` | Report slug if the run produced one, empty string otherwise |
 | `report-url` | Full URL to the dashboard report page, empty string if no report |
 | `failure-reason` | Server-provided failure reason if the run failed, empty string otherwise |
+| `score` | Final score (0-100) when the run produced a report, empty string otherwise |
+| `grade` | Final letter grade when the run produced a report, empty string otherwise |
+| `baseline-score` | Score of the most recent prior published report for the same prompt, empty string if no baseline |
 
 ### Rendering your own comment
 
@@ -189,8 +192,12 @@ Set `skip-comment` and/or `skip-status` to `true` and consume the outputs from a
       const title = '${{ steps.eval.outputs.prompt-title }}'
       const reportUrl = '${{ steps.eval.outputs.report-url }}'
       const failure = '${{ steps.eval.outputs.failure-reason }}'
+      const score = '${{ steps.eval.outputs.score }}'
+      const grade = '${{ steps.eval.outputs.grade }}'
+      const baseline = '${{ steps.eval.outputs.baseline-score }}'
+      const delta = score && baseline ? ` (${Number(score) - Number(baseline) >= 0 ? '+' : ''}${Number(score) - Number(baseline)} vs baseline)` : ''
       const body = status === 'completed' && reportUrl
-        ? `🎉 **${title}** → [view ${reportUrl.split('/').pop()}](${reportUrl})`
+        ? `🎉 **${title}** — ${grade} ${score}/100${delta} → [report](${reportUrl})`
         : status === 'failed'
         ? `💥 **${title}** failed: ${failure}`
         : `⏱ **${title}** still running`

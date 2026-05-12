@@ -190,26 +190,27 @@ function renderTestedLine(urlMapRaw) {
     return null
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
-  const entries = Object.entries(parsed)
-  if (entries.length === 0) return null
-  const parts = entries.map(([host, value]) => {
-    let previewHost
-    try {
-      previewHost = new URL(value).hostname
-    } catch {
-      previewHost = value
-    }
-    return `${host} → ${previewHost}`
-  })
+  const parts = Object.entries(parsed)
+    .filter(([, value]) => typeof value === "string" && value.length > 0)
+    .map(([host, value]) => {
+      let previewHost
+      try {
+        previewHost = new URL(value).hostname
+      } catch {
+        previewHost = value
+      }
+      return `${host} → ${previewHost}`
+    })
+  if (parts.length === 0) return null
   return `Tested: ${parts.join(", ")}`
 }
 
 function deriveDashboardUrl(report, statusUrl) {
   if (report && report.url) {
-    return report.url.replace(/\/reports\/[^/]+$/, "")
+    return report.url.replace(/\/+$/, "").replace(/\/reports\/[^/]+$/, "")
   }
   if (!statusUrl) return null
-  return statusUrl.replace(/\/api\/v1\/runs\/[^/]+$/, "")
+  return statusUrl.replace(/\/+$/, "").replace(/\/api\/v1\/runs\/[^/]+$/, "")
 }
 
 // Client-side renderers — server returns minimal status now, action renders
@@ -232,7 +233,8 @@ function renderComment({ status, promptTitle, statusUrl, report, baseline, failu
     return lines.join("\n")
   }
 
-  if (status === "pending" || status === "running") {
+  // Treat any unknown status as still-running so the comment stays informative.
+  if (status !== "completed" && status !== "superseded") {
     const lines = [heading, "", `${emoji} Running eval`]
     if (sha7) {
       lines.push("", `Commit: \`${sha7}\``)
@@ -288,12 +290,9 @@ function renderComment({ status, promptTitle, statusUrl, report, baseline, failu
     return lines.join("\n")
   }
 
-  const lines = [heading, "", `${emoji} Running eval`]
-  if (sha7) {
-    lines.push("", `Commit: \`${sha7}\``)
-  }
-  lines.push("", `[Status page →](${statusUrl})`)
-  return lines.join("\n")
+  // Unreachable: all known statuses handled above and unknowns route to the
+  // running branch. Keep a safe default so renderComment never returns undefined.
+  return heading
 }
 
 function renderCommitStatus({ status, statusUrl, report, failureReason }) {
@@ -583,7 +582,7 @@ module.exports = async function run({ core, github, context }) {
   core.setOutput("failure-reason", failureReason || "")
   core.setOutput("score", (report && report.score != null) ? String(report.score) : "")
   core.setOutput("grade", (report && report.grade) || "")
-  core.setOutput("baseline-score", (last && last.baseline && last.baseline.score != null) ? String(last.baseline.score) : "")
+  core.setOutput("baseline-score", (baseline && baseline.score != null) ? String(baseline.score) : "")
 
   if (finalStatus === "completed" || finalStatus === "failed" || finalStatus === "superseded") {
     if (!skipComment) {
