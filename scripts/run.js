@@ -224,6 +224,8 @@ module.exports = async function run({ core, github, context }) {
   const waitTimeoutMin = Number(process.env.EVALS_WAIT_TIMEOUT_MINUTES || "5")
   const pollIntervalS = Number(process.env.EVALS_POLL_INTERVAL_SECONDS || "20")
   const timeoutFails = String(process.env.EVALS_TIMEOUT_FAILS || "false").toLowerCase() === "true"
+  const skipComment = String(process.env.EVALS_SKIP_COMMENT || "false").toLowerCase() === "true"
+  const skipStatus = String(process.env.EVALS_SKIP_STATUS || "false").toLowerCase() === "true"
 
   core.info(`2027 eval action: API base=${apiBase}`)
 
@@ -330,19 +332,23 @@ module.exports = async function run({ core, github, context }) {
 
   const ctxName = deriveContext(promptTitle, promptId)
 
-  await upsertComment(
-    github,
-    owner,
-    repo,
-    prNumber,
-    marker,
-    renderComment({ status: "pending", promptTitle, statusUrl, report: null, failureReason: null }),
-  )
-  try {
-    const initialStatus = renderCommitStatus({ status: "pending", statusUrl, report: null, failureReason: null })
-    await setCommitStatus(github, owner, repo, sha, { ...initialStatus, context: ctxName })
-  } catch (e) {
-    core.warning(`failed to set initial commit status: ${e.message}`)
+  if (!skipComment) {
+    await upsertComment(
+      github,
+      owner,
+      repo,
+      prNumber,
+      marker,
+      renderComment({ status: "pending", promptTitle, statusUrl, report: null, failureReason: null }),
+    )
+  }
+  if (!skipStatus) {
+    try {
+      const initialStatus = renderCommitStatus({ status: "pending", statusUrl, report: null, failureReason: null })
+      await setCommitStatus(github, owner, repo, sha, { ...initialStatus, context: ctxName })
+    } catch (e) {
+      core.warning(`failed to set initial commit status: ${e.message}`)
+    }
   }
 
   const deadline = Date.now() + waitTimeoutMin * 60 * 1000
@@ -406,14 +412,26 @@ module.exports = async function run({ core, github, context }) {
   const report = (last && last.report) || null
   const failureReason = (last && last.failureReason) || null
 
+  // Emit outputs unconditionally so consumers can render their own comment/status
+  // even when the built-in renderers are disabled via skip-comment / skip-status.
+  core.setOutput("final-status", finalStatus === "pending" ? "running" : finalStatus)
+  core.setOutput("prompt-title", promptTitle || "")
+  core.setOutput("report-slug", (report && report.slug) || "")
+  core.setOutput("report-url", (report && report.url) || "")
+  core.setOutput("failure-reason", failureReason || "")
+
   if (finalStatus === "completed" || finalStatus === "failed" || finalStatus === "superseded") {
-    const body = renderComment({ status: finalStatus, promptTitle, statusUrl, report, failureReason })
-    await upsertComment(github, owner, repo, prNumber, marker, body)
-    const cs = renderCommitStatus({ status: finalStatus, statusUrl, report, failureReason })
-    try {
-      await setCommitStatus(github, owner, repo, sha, { ...cs, context: ctxName })
-    } catch (e) {
-      core.warning(`failed to set final commit status: ${e.message}`)
+    if (!skipComment) {
+      const body = renderComment({ status: finalStatus, promptTitle, statusUrl, report, failureReason })
+      await upsertComment(github, owner, repo, prNumber, marker, body)
+    }
+    if (!skipStatus) {
+      const cs = renderCommitStatus({ status: finalStatus, statusUrl, report, failureReason })
+      try {
+        await setCommitStatus(github, owner, repo, sha, { ...cs, context: ctxName })
+      } catch (e) {
+        core.warning(`failed to set final commit status: ${e.message}`)
+      }
     }
     if (finalStatus === "failed") {
       core.setFailed(`eval failed: ${failureReason || "unknown failure"}`)
@@ -422,23 +440,27 @@ module.exports = async function run({ core, github, context }) {
   }
 
   // timeout — still running. Keep PR check unblocked unless timeout-fails=true.
-  const timeoutBody = renderComment({ status: "running", promptTitle, statusUrl, report: null, failureReason: null })
-  await upsertComment(github, owner, repo, prNumber, marker, timeoutBody)
+  if (!skipComment) {
+    const timeoutBody = renderComment({ status: "running", promptTitle, statusUrl, report: null, failureReason: null })
+    await upsertComment(github, owner, repo, prNumber, marker, timeoutBody)
+  }
   const timeoutState = timeoutFails ? "failure" : "success"
   const timeoutDescription = timeoutFails
     ? "Eval timed out — failing per timeout-fails=true"
     : "Still running — see status page"
-  try {
-    await setCommitStatus(github, owner, repo, sha, {
-      state: timeoutState,
-      description: timeoutDescription,
-      targetUrl: statusUrl,
-      context: ctxName,
-    })
-  } catch (e) {
-    core.warning(`failed to set timeout commit status: ${e.message}`)
+  if (!skipStatus) {
+    try {
+      await setCommitStatus(github, owner, repo, sha, {
+        state: timeoutState,
+        description: timeoutDescription,
+        targetUrl: statusUrl,
+        context: ctxName,
+      })
+    } catch (e) {
+      core.warning(`failed to set timeout commit status: ${e.message}`)
+    }
   }
   core.info(
-    `timeout reached after ${waitTimeoutMin} min — commit status set to '${timeoutState}' (timeout-fails=${timeoutFails})`,
+    `timeout reached after ${waitTimeoutMin} min — commit status would be '${timeoutState}' (timeout-fails=${timeoutFails})${skipStatus ? " [skipped]" : ""}`,
   )
 }

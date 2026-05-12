@@ -152,6 +152,8 @@ jobs:
 | `wait-timeout-minutes` | no | `20` | Poll for at most this many minutes before exiting |
 | `poll-interval-seconds` | no | `20` | Seconds between status polls (used as base for backoff) |
 | `timeout-fails` | no | `false` | When `true`, a polling timeout marks the commit status as `failure` (blocks merge). Default `false` marks it `success` so checks don't get stuck pending. |
+| `skip-comment` | no | `false` | When `true`, the action does not post the sticky PR comment. Use this if you want to render your own comment from the outputs. |
+| `skip-status` | no | `false` | When `true`, the action does not set the commit status. Use this if you want to set your own status from the outputs. |
 | `github-token` | no | `${{ github.token }}` | Token used to post the PR comment + commit status |
 
 ## Outputs
@@ -159,7 +161,45 @@ jobs:
 | Name | Description |
 |------|-------------|
 | `run-id` | UUID of the eval run on 2027 |
-| `status-url` | Live status page link |
+| `status-url` | API endpoint that reflects the run's current state |
+| `final-status` | Terminal state observed before the action exited: `completed`, `failed`, `superseded`, or `running` (on timeout) |
+| `prompt-title` | Human-readable title of the evaluated prompt |
+| `report-slug` | Report slug if the run produced one, empty string otherwise |
+| `report-url` | Full URL to the dashboard report page, empty string if no report |
+| `failure-reason` | Server-provided failure reason if the run failed, empty string otherwise |
+
+### Rendering your own comment
+
+Set `skip-comment` and/or `skip-status` to `true` and consume the outputs from a downstream step:
+
+```yaml
+- id: eval
+  uses: team2027/evals-action@v0.2.0
+  with:
+    api-key: ${{ secrets.EVALS_API_KEY }}
+    prompt-id: 12345678-1234-1234-1234-1234567890ab
+    url-map: |
+      { "acme.com": "${{ github.event.deployment_status.target_url }}" }
+    skip-comment: true
+
+- uses: actions/github-script@v7
+  with:
+    script: |
+      const status = '${{ steps.eval.outputs.final-status }}'
+      const title = '${{ steps.eval.outputs.prompt-title }}'
+      const reportUrl = '${{ steps.eval.outputs.report-url }}'
+      const failure = '${{ steps.eval.outputs.failure-reason }}'
+      const body = status === 'completed' && reportUrl
+        ? `🎉 **${title}** → [view ${reportUrl.split('/').pop()}](${reportUrl})`
+        : status === 'failed'
+        ? `💥 **${title}** failed: ${failure}`
+        : `⏱ **${title}** still running`
+      await github.rest.issues.createComment({
+        ...context.repo,
+        issue_number: context.payload.pull_request.number,
+        body,
+      })
+```
 
 ## Behavior
 

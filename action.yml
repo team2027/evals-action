@@ -31,10 +31,34 @@ inputs:
     description: When 'true', a polling timeout marks the commit status as failure (blocks merge). Default 'false' marks it success so the check doesn't get stuck pending.
     required: false
     default: "false"
+  skip-comment:
+    description: When 'true', the action does not post or update the sticky PR comment. Use this if you want to render your own comment from the action's outputs.
+    required: false
+    default: "false"
+  skip-status:
+    description: When 'true', the action does not set the commit status check. Use this if you want to set your own status from the action's outputs.
+    required: false
+    default: "false"
   github-token:
     description: GitHub token for posting PR comments and commit statuses (defaults to github.token)
     required: false
     default: ${{ github.token }}
+
+outputs:
+  run-id:
+    description: UUID of the eval run on 2027
+  status-url:
+    description: API endpoint that reflects the run's current state
+  final-status:
+    description: Terminal state observed before the action exited — completed | failed | superseded | running (the last on timeout)
+  prompt-title:
+    description: Human-readable title of the evaluated prompt
+  report-slug:
+    description: Report slug if the run produced a scorable report, empty string otherwise
+  report-url:
+    description: Full URL to the dashboard report page, empty string if no report
+  failure-reason:
+    description: Server-provided failure reason if the run failed, empty string otherwise
 
 runs:
   using: composite
@@ -50,6 +74,8 @@ runs:
         EVALS_WAIT_TIMEOUT_MINUTES: ${{ inputs.wait-timeout-minutes }}
         EVALS_POLL_INTERVAL_SECONDS: ${{ inputs.poll-interval-seconds }}
         EVALS_TIMEOUT_FAILS: ${{ inputs.timeout-fails }}
+        EVALS_SKIP_COMMENT: ${{ inputs.skip-comment }}
+        EVALS_SKIP_STATUS: ${{ inputs.skip-status }}
       with:
         github-token: ${{ inputs.github-token }}
         script: |
