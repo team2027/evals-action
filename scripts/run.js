@@ -358,7 +358,7 @@ async function lookupPrBySha(github, owner, repo, sha) {
   }
 }
 
-module.exports = async function run({ core, github, context }) {
+async function run({ core, github, context }) {
   const apiKey = process.env.EVALS_API_KEY
   const apiBase = (process.env.EVALS_API_BASE_URL || "https://2027.dev/evals").replace(/\/$/, "")
   const promptId = process.env.EVALS_PROMPT_ID || undefined
@@ -628,3 +628,11 @@ module.exports = async function run({ core, github, context }) {
     `timeout reached after ${waitTimeoutMin} min — commit status would be '${timeoutState}' (timeout-fails=${timeoutFails})${skipStatus ? " [skipped]" : ""}`,
   )
 }
+
+module.exports = run
+module.exports.renderComment = renderComment
+module.exports.renderCommitStatus = renderCommitStatus
+module.exports.statusEmoji = statusEmoji
+module.exports.formatDelta = formatDelta
+module.exports.renderTestedLine = renderTestedLine
+module.exports.deriveDashboardUrl = deriveDashboardUrl
