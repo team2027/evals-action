@@ -191,22 +191,18 @@ via the marker `<!-- 2027-eval-comment:<promptId> -->`.
 - **Single prompt per call.** Use `strategy.matrix` in your workflow to fan
   out across multiple prompts.
 
-## Testing against staging
+## API base URL
 
-Set `api-base-url` to a non-production deployment for testing:
+`api-base-url` defaults to `https://2027.dev/evals`, the managed production
+deployment. The input exists so the action can point at a different API host
+in the future (self-hosted evals, staging) — there's no public alternative
+host today.
 
-```yaml
-- uses: team2027/evals-action@v0.1.0
-  with:
-    api-key: ${{ secrets.EVALS_API_KEY_STAGING }}
-    api-base-url: <staging-url>  # TODO: replace with the canonical staging deployment URL once published
-    prompt-id: ...
-    url-map: ...
-```
-
-The action logs the resolved API base on first run for debuggability, so
-you can verify which deployment your CI is hitting.
+The action logs the resolved API base on the first line of its output, so you
+can verify which deployment your CI is hitting.
 
 ## Source
 
-This repo. Tracks the public REST API in [team2027/evals](https://github.com/team2027/evals) — issues that span both repos are filed there.
+Distributed from [team2027/evals-action](https://github.com/team2027/evals-action).
+Developed alongside the public REST API in [team2027/evals](https://github.com/team2027/evals)
+— issues that span both repos are filed there.

@@ -17,7 +17,7 @@ inputs:
     description: 'JSON object mapping production hostnames to preview URLs (full http(s) URLs required), e.g. {"acme.com":"https://deploy-preview-1.netlify.app"}'
     required: true
   deployment-url:
-    description: Preview deployment URL. Required when url-map has more than one entry.
+    description: Preview deployment URL. Required when url-map has more than one entry (validated at runtime).
     required: false
   wait-timeout-minutes:
     description: How long to poll for completion before returning (action exits 0 on timeout)
