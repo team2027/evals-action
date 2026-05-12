@@ -59,6 +59,16 @@ outputs:
     description: Full URL to the dashboard report page, empty string if no report
   failure-reason:
     description: Server-provided failure reason if the run failed, empty string otherwise
+  score:
+    description: Final score (0-100) when the run produced a report, empty string otherwise
+  grade:
+    description: Final letter grade when the run produced a report, empty string otherwise
+  baseline-score:
+    description: Score of the most recent prior published report for the same prompt, empty string if no baseline
+  report-json:
+    description: Full report object as stringified JSON (slug, url, score, grade, metrics, dimensions). Empty string if no report. Forward-compatible — picks up any new fields the API adds without an action release.
+  baseline-json:
+    description: Baseline object as stringified JSON ({ score, grade }). Empty string if no baseline. Sourced from the most recent prior published run for the same prompt.
 
 runs:
   using: composite

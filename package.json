@@ -1,0 +1,11 @@
+{
+  "name": "team2027-evals-action",
+  "private": true,
+  "description": "DevDeps-only manifest for contract tests. The action itself ships as a composite GH Action with no runtime install step.",
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  },
+  "devDependencies": {
+    "openapi-sampler": "1.7.2"
+  }
+}

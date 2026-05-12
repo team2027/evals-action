@@ -1,0 +1,25 @@
+name: Contract test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Daily run catches API drift even when the action repo is quiet.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+      - name: Install devDeps
+        run: npm install --no-audit --no-fund
+      - name: Run contract tests against live OpenAPI spec
+        env:
+          OPENAPI_SPEC_URL: ${{ vars.OPENAPI_SPEC_URL || 'https://2027.dev/evals/api/openapi' }}
+        run: npm test
