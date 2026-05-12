@@ -72,23 +72,20 @@ async function postJson(url, apiKey, body) {
 // Retry POSTs on transient 5xx / network errors. 4xx fails immediately so a
 // bad config (e.g. wrong promptId) doesn't sit retrying.
 async function postJsonWithRetry(url, apiKey, body, { attempts = 3, baseDelayMs = 1000, core } = {}) {
-  let lastErr
   for (let i = 0; i < attempts; i++) {
     try {
       return await postJson(url, apiKey, body)
     } catch (e) {
-      lastErr = e
       const transient = e instanceof HttpStatusError ? e.status >= 500 : true
       if (!transient || i === attempts - 1) throw e
       const retryAfter = Number(e.retryAfter)
       const delay = Number.isFinite(retryAfter) && retryAfter > 0
         ? retryAfter * 1000
         : baseDelayMs * 2 ** i
-      core?.warning(`POST retry ${i + 1}/${attempts - 1} after ${Math.round(delay)}ms: ${e.message}`)
+      core?.warning(`attempt ${i + 1}/${attempts} failed, retrying in ${Math.round(delay)}ms: ${e.message}`)
       await sleep(delay)
     }
   }
-  throw lastErr
 }
 
 async function getJson(url, apiKey) {
@@ -380,9 +377,8 @@ function renderCommitStatus({ status, statusUrl, report, failureReason }) {
     return { state: "success", description: "Completed — see status page", targetUrl: statusUrl }
   }
   if (status === "failed") {
-    const description = failureReason
-      ? truncate(failureReason, STATUS_DESC_MAX)
-      : "Eval failed — see status page"
+    // setCommitStatus handles singleLine + truncate; pass raw failureReason here.
+    const description = failureReason || "Eval failed — see status page"
     return { state: "error", description, targetUrl: statusUrl }
   }
   if (status === "superseded") {
