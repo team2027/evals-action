@@ -341,6 +341,26 @@ function extractPrFromContext(context) {
   return { number: undefined, title: undefined, branch: undefined, sha: context.sha, headRepoFullName: undefined }
 }
 
+// Baseline is computed client-side from the runs-list endpoint instead of
+// being returned on the run response. We pick the most recent prior
+// published run for the same prompt; the current run is filtered out by id
+// because it may already be in the published list by the time we fetch.
+async function fetchBaseline(apiBase, apiKey, promptId, currentRunId, core) {
+  const url = `${apiBase}/api/v1/runs?promptId=${encodeURIComponent(promptId)}&reportStatus=published&limit=2`
+  try {
+    const list = await getJson(url, apiKey)
+    if (!Array.isArray(list)) return null
+    const prior = list.find(
+      (r) => r && r.runId !== currentRunId && r.report && typeof r.report.score === "number",
+    )
+    if (!prior) return null
+    return { score: prior.report.score, grade: prior.report.grade || null }
+  } catch (e) {
+    core.warning(`baseline fetch failed (rendering without delta): ${e.message}`)
+    return null
+  }
+}
+
 async function lookupPrBySha(github, owner, repo, sha) {
   try {
     const { data } = await github.rest.repos.listPullRequestsAssociatedWithCommit({ owner, repo, commit_sha: sha })
@@ -570,8 +590,14 @@ async function run({ core, github, context }) {
 
   const finalStatus = (last && last.status) || "pending"
   const report = (last && last.report) || null
-  const baseline = (last && last.baseline) || null
   const failureReason = (last && last.failureReason) || null
+
+  // Baseline is meaningful only when we have a fresh score to diff against.
+  // Skip the extra round-trip on failed/superseded/timeout paths.
+  const baseline =
+    finalStatus === "completed" && report && typeof report.score === "number"
+      ? await fetchBaseline(apiBase, apiKey, promptId, runId, core)
+      : null
 
   // Emit outputs unconditionally so consumers can render their own comment/status
   // even when the built-in renderers are disabled via skip-comment / skip-status.

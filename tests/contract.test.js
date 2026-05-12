@@ -46,13 +46,14 @@ const RUN_FIELDS_THE_ACTION_READS = [
   "failureReason",
   // Prompt — for the comment heading
   "prompt.title",
-  // Report — for the score/grade/links section
+  // Report — for the score/grade/links section.
+  // Baseline is computed client-side by listing prior published runs (see
+  // fetchBaseline + the /api/v1/runs filter test below), so it isn't a field
+  // on the Run schema.
   "report.url",
   "report.slug",
   "report.score",
   "report.grade",
-  // Baseline — for the delta-vs-baseline line
-  "baseline.score",
 ]
 
 test("Run schema declares every field the action reads", () => {
@@ -66,6 +67,19 @@ test("Run schema declares every field the action reads", () => {
       `if the API renamed these, update scripts/run.js to match.\n` +
       `if the API hasn't shipped them yet, this build is gating that merge correctly.`,
   )
+})
+
+test("GET /api/v1/runs accepts promptId + reportStatus filters (used for baseline lookup)", () => {
+  const op = spec.paths?.["/api/v1/runs"]?.get
+  assert.ok(op, "spec missing GET /api/v1/runs")
+  const params = op.parameters || []
+  const names = new Set(params.filter((p) => p.in === "query").map((p) => p.name))
+  for (const required of ["promptId", "reportStatus"]) {
+    assert.ok(
+      names.has(required),
+      `GET /api/v1/runs missing query param '${required}' — action's baseline lookup depends on it`,
+    )
+  }
 })
 
 test("RunResponse declares fields the action reads from POST /run", () => {
