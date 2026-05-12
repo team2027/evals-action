@@ -165,28 +165,135 @@ async function setCommitStatus(github, owner, repo, sha, params) {
   })
 }
 
-// Client-side renderers — server returns minimal status now, action renders
-// the comment + commit status from { status, prompt.title, report?, failureReason }.
-function renderComment({ status, promptTitle, statusUrl, report, failureReason }) {
-  const title = promptTitle || "(unknown)"
-  if (status === "pending" || status === "running") {
-    return `🔄 Running eval for **${title}** — [status page](${statusUrl})`
+function statusEmoji(status) {
+  if (status === "completed") return "✅"
+  if (status === "failed") return "❌"
+  if (status === "superseded") return "↻"
+  return "🔄"
+}
+
+function formatDelta(delta) {
+  const rounded = Math.round(delta * 10) / 10
+  const abs = Math.abs(rounded)
+  const display = Number.isInteger(abs) ? String(abs) : abs.toFixed(1)
+  if (rounded > 0) return `+${display} pts vs baseline`
+  if (rounded < 0) return `-${display} pts vs baseline`
+  return "Same as baseline"
+}
+
+function renderTestedLine(urlMapRaw) {
+  if (!urlMapRaw) return null
+  let parsed
+  try {
+    parsed = JSON.parse(urlMapRaw)
+  } catch {
+    return null
   }
-  if (status === "completed") {
-    if (report?.url) {
-      return `✅ Eval complete for **${title}** — [view report](${report.url})`
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
+  const entries = Object.entries(parsed)
+  if (entries.length === 0) return null
+  const parts = entries.map(([host, value]) => {
+    let previewHost
+    try {
+      previewHost = new URL(value).hostname
+    } catch {
+      previewHost = value
     }
-    return `✅ Eval complete for **${title}** — [status page](${statusUrl})`
+    return `${host} → ${previewHost}`
+  })
+  return `Tested: ${parts.join(", ")}`
+}
+
+function deriveDashboardUrl(report, statusUrl) {
+  if (report && report.url) {
+    return report.url.replace(/\/reports\/[^/]+$/, "")
   }
+  if (!statusUrl) return null
+  return statusUrl.replace(/\/api\/v1\/runs\/[^/]+$/, "")
+}
+
+// Client-side renderers — server returns minimal status now, action renders
+// the comment + commit status from { status, prompt.title, report?, baseline?, failureReason }.
+function renderComment({ status, promptTitle, statusUrl, report, baseline, failureReason, sha, urlMapRaw }) {
+  const title = promptTitle || "(unknown)"
+  const sha7 = sha ? String(sha).slice(0, 7) : ""
+  const emoji = statusEmoji(status)
+  const heading = `## 2027 AX Eval — ${title}`
+
   if (status === "failed") {
-    const reason = failureReason || "see status page"
-    return `❌ Eval failed for **${title}**: ${reason}\n\n[status page](${statusUrl})`
+    const lines = [heading, "", `${emoji} **Eval failed**`]
+    if (failureReason) {
+      lines.push("", failureReason)
+    }
+    if (sha7) {
+      lines.push("", `Commit: \`${sha7}\``)
+    }
+    lines.push("", `[Status page →](${statusUrl})`)
+    return lines.join("\n")
   }
+
+  if (status === "pending" || status === "running") {
+    const lines = [heading, "", `${emoji} Running eval`]
+    if (sha7) {
+      lines.push("", `Commit: \`${sha7}\``)
+    }
+    lines.push("", `[Status page →](${statusUrl})`)
+    return lines.join("\n")
+  }
+
   if (status === "superseded") {
-    return `↻ Eval superseded — [status page](${statusUrl})`
+    const lines = [heading, "", `${emoji} Eval superseded`]
+    if (sha7) {
+      lines.push("", `Commit: \`${sha7}\``)
+    }
+    lines.push("", `[Status page →](${statusUrl})`)
+    return lines.join("\n")
   }
-  // Treat any unknown status as still-running so the comment stays informative.
-  return `🔄 Running eval for **${title}** — [status page](${statusUrl})`
+
+  if (status === "completed") {
+    const hasScore = report && report.score != null && report.grade
+    const statusLine = hasScore
+      ? `${emoji} **${report.grade} (${report.score}/100)**`
+      : `${emoji} Eval complete`
+    const lines = [heading, "", statusLine]
+
+    if (
+      hasScore &&
+      baseline &&
+      typeof baseline.score === "number" &&
+      typeof report.score === "number"
+    ) {
+      lines.push("", formatDelta(report.score - baseline.score))
+    }
+
+    const tested = renderTestedLine(urlMapRaw)
+    if (tested) {
+      lines.push("", tested)
+    }
+    if (sha7) {
+      lines.push("", `Commit: \`${sha7}\``)
+    }
+
+    const linkParts = []
+    if (report && report.url) {
+      linkParts.push(`[View report →](${report.url})`)
+    }
+    const dashboardUrl = deriveDashboardUrl(report, statusUrl)
+    if (dashboardUrl) {
+      linkParts.push(`[Dashboard](${dashboardUrl})`)
+    }
+    if (linkParts.length > 0) {
+      lines.push("", linkParts.join(" · "))
+    }
+    return lines.join("\n")
+  }
+
+  const lines = [heading, "", `${emoji} Running eval`]
+  if (sha7) {
+    lines.push("", `Commit: \`${sha7}\``)
+  }
+  lines.push("", `[Status page →](${statusUrl})`)
+  return lines.join("\n")
 }
 
 function renderCommitStatus({ status, statusUrl, report, failureReason }) {
@@ -387,7 +494,7 @@ module.exports = async function run({ core, github, context }) {
       repo,
       prNumber,
       marker,
-      renderComment({ status: "pending", promptTitle, statusUrl, report: null, failureReason: null }),
+      renderComment({ status: "pending", promptTitle, statusUrl, report: null, baseline: null, failureReason: null, sha, urlMapRaw }),
       core,
     )
   }
@@ -464,6 +571,7 @@ module.exports = async function run({ core, github, context }) {
 
   const finalStatus = (last && last.status) || "pending"
   const report = (last && last.report) || null
+  const baseline = (last && last.baseline) || null
   const failureReason = (last && last.failureReason) || null
 
   // Emit outputs unconditionally so consumers can render their own comment/status
@@ -473,10 +581,13 @@ module.exports = async function run({ core, github, context }) {
   core.setOutput("report-slug", (report && report.slug) || "")
   core.setOutput("report-url", (report && report.url) || "")
   core.setOutput("failure-reason", failureReason || "")
+  core.setOutput("score", (report && report.score != null) ? String(report.score) : "")
+  core.setOutput("grade", (report && report.grade) || "")
+  core.setOutput("baseline-score", (last && last.baseline && last.baseline.score != null) ? String(last.baseline.score) : "")
 
   if (finalStatus === "completed" || finalStatus === "failed" || finalStatus === "superseded") {
     if (!skipComment) {
-      const body = renderComment({ status: finalStatus, promptTitle, statusUrl, report, failureReason })
+      const body = renderComment({ status: finalStatus, promptTitle, statusUrl, report, baseline, failureReason, sha, urlMapRaw })
       await upsertComment(github, owner, repo, prNumber, marker, body, core)
     }
     if (!skipStatus) {
@@ -495,7 +606,7 @@ module.exports = async function run({ core, github, context }) {
 
   // timeout — still running. Keep PR check unblocked unless timeout-fails=true.
   if (!skipComment) {
-    const timeoutBody = renderComment({ status: "running", promptTitle, statusUrl, report: null, failureReason: null })
+    const timeoutBody = renderComment({ status: "running", promptTitle, statusUrl, report: null, baseline: null, failureReason: null, sha, urlMapRaw })
     await upsertComment(github, owner, repo, prNumber, marker, timeoutBody, core)
   }
   const timeoutState = timeoutFails ? "failure" : "success"
