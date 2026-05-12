@@ -162,11 +162,17 @@ async function setCommitStatus(github, owner, repo, sha, params) {
   })
 }
 
-function statusEmoji(status) {
-  if (status === "completed") return "✅"
-  if (status === "failed") return "❌"
-  if (status === "superseded") return "↻"
-  return "🔄"
+function scoreBar(score, width = 20) {
+  const s = Math.max(0, Math.min(100, Number(score) || 0))
+  const filled = Math.round((s / 100) * width)
+  return "█".repeat(filled) + "░".repeat(Math.max(0, width - filled))
+}
+
+// For time/cost/errors/interruptions: lower is better. The existing delta
+// helpers return strings prefixed with "+"/"-"; map that sign to an arrow.
+function metricArrow(deltaStr) {
+  if (!deltaStr) return ""
+  return deltaStr.startsWith("-") ? `▼ ${deltaStr}` : `▲ ${deltaStr}`
 }
 
 function formatDelta(delta) {
@@ -227,50 +233,6 @@ function formatCountDelta(n) {
   return n > 0 ? `+${n}` : String(n)
 }
 
-function renderMetricsLine(current, baseline) {
-  if (!current || typeof current !== "object") return null
-  const parts = []
-
-  if (current.time) {
-    let s = `Time: ${current.time}`
-    if (baseline && typeof current.timeSeconds === "number" && typeof baseline.timeSeconds === "number") {
-      const d = formatSecondsDelta(current.timeSeconds - baseline.timeSeconds)
-      if (d) s += ` (${d})`
-    }
-    parts.push(s)
-  }
-
-  if (current.cost) {
-    let s = `Cost: ${current.cost}`
-    if (baseline && typeof current.costUsd === "number" && typeof baseline.costUsd === "number") {
-      const d = formatCostDelta(current.costUsd - baseline.costUsd)
-      if (d) s += ` (${d})`
-    }
-    parts.push(s)
-  }
-
-  if (typeof current.errors === "number") {
-    let s = `Errors: ${current.errors}`
-    if (baseline && typeof baseline.errors === "number") {
-      const d = formatCountDelta(current.errors - baseline.errors)
-      if (d) s += ` (${d})`
-    }
-    parts.push(s)
-  }
-
-  if (typeof current.interruptions === "number") {
-    let s = `Interruptions: ${current.interruptions}`
-    if (baseline && typeof baseline.interruptions === "number") {
-      const d = formatCountDelta(current.interruptions - baseline.interruptions)
-      if (d) s += ` (${d})`
-    }
-    parts.push(s)
-  }
-
-  if (parts.length === 0) return null
-  return parts.join(" · ")
-}
-
 function deriveDashboardUrl(report, statusUrl) {
   if (report && report.url) {
     return report.url.replace(/\/+$/, "").replace(/\/reports\/[^/]+$/, "")
@@ -279,91 +241,145 @@ function deriveDashboardUrl(report, statusUrl) {
   return statusUrl.replace(/\/+$/, "").replace(/\/api\/v1\/runs\/[^/]+$/, "")
 }
 
+function renderScoreBlock(report, baseline) {
+  if (!report || report.score == null) return null
+  const bar = scoreBar(report.score)
+  const hasBaseline = baseline && typeof baseline.score === "number"
+  if (!hasBaseline) {
+    return ["```", `  ${bar}`, "```"].join("\n")
+  }
+  const delta = report.score - baseline.score
+  const rounded = Math.round(delta * 10) / 10
+  const abs = Math.abs(rounded)
+  const display = Number.isInteger(abs) ? String(abs) : abs.toFixed(1)
+  let prefix
+  let annotation
+  if (rounded > 0) {
+    prefix = "+"
+    annotation = `▲ +${display} pts vs baseline`
+  } else if (rounded < 0) {
+    prefix = "-"
+    annotation = `▼ -${display} pts vs baseline`
+  } else {
+    prefix = " "
+    annotation = "Same as baseline"
+  }
+  return ["```diff", `${prefix} ${bar}   ${annotation}`, "```"].join("\n")
+}
+
+// Markdown table of the metrics the run reports, with ▼/▲ deltas where a
+// baseline is available. Only columns the current run populates show up.
+function renderMetricsTable(current, baseline) {
+  if (!current || typeof current !== "object") return null
+  const cols = []
+
+  if (current.time) {
+    let v = current.time
+    if (baseline && typeof current.timeSeconds === "number" && typeof baseline.timeSeconds === "number") {
+      const d = formatSecondsDelta(current.timeSeconds - baseline.timeSeconds)
+      if (d) v += `  ${metricArrow(d)}`
+    }
+    cols.push({ header: "Time", value: v })
+  }
+  if (current.cost) {
+    let v = current.cost
+    if (baseline && typeof current.costUsd === "number" && typeof baseline.costUsd === "number") {
+      const d = formatCostDelta(current.costUsd - baseline.costUsd)
+      if (d) v += `  ${metricArrow(d)}`
+    }
+    cols.push({ header: "Cost", value: v })
+  }
+  if (typeof current.errors === "number") {
+    let v = String(current.errors)
+    if (baseline && typeof baseline.errors === "number") {
+      const d = formatCountDelta(current.errors - baseline.errors)
+      if (d) v += `  ${metricArrow(d)}`
+    }
+    cols.push({ header: "Errors", value: v })
+  }
+  if (typeof current.interruptions === "number") {
+    let v = String(current.interruptions)
+    if (baseline && typeof baseline.interruptions === "number") {
+      const d = formatCountDelta(current.interruptions - baseline.interruptions)
+      if (d) v += `  ${metricArrow(d)}`
+    }
+    cols.push({ header: "Interruptions", value: v })
+  }
+
+  if (cols.length === 0) return null
+  const header = `| ${cols.map((c) => c.header).join(" | ")} |`
+  const sep = `| ${cols.map(() => "---").join(" | ")} |`
+  const row = `| ${cols.map((c) => c.value).join(" | ")} |`
+  return [header, sep, row].join("\n")
+}
+
 // Client-side renderers — server returns minimal status now, action renders
 // the comment + commit status from { status, prompt.title, report?, baseline?, failureReason }.
 function renderComment({ status, promptTitle, statusUrl, report, baseline, failureReason, sha, urlMapRaw }) {
   const title = promptTitle || "(unknown)"
   const sha7 = sha ? String(sha).slice(0, 7) : ""
-  const emoji = statusEmoji(status)
-  const heading = `## 2027 AX Eval — ${title}`
+
+  const footer = () => {
+    const parts = []
+    if (sha7) parts.push(`Commit \`${sha7}\``)
+    if (statusUrl) parts.push(`[Status →](${statusUrl})`)
+    return parts.length ? parts.join("  ·  ") : null
+  }
 
   if (status === "failed") {
-    const lines = [heading, "", `${emoji} **Eval failed**`]
+    const lines = [`### 2027 // ${title} — Eval Failed`]
     if (failureReason) {
-      lines.push("", failureReason)
+      lines.push("", "```diff", `- ${singleLine(failureReason)}`, "```")
     }
-    if (sha7) {
-      lines.push("", `Commit: \`${sha7}\``)
-    }
-    lines.push("", `[Status page →](${statusUrl})`)
+    const foot = footer()
+    if (foot) lines.push("", foot)
     return lines.join("\n")
   }
 
-  // Treat any unknown status as still-running so the comment stays informative.
   if (status !== "completed" && status !== "superseded") {
-    const lines = [heading, "", `${emoji} Running eval`]
-    if (sha7) {
-      lines.push("", `Commit: \`${sha7}\``)
-    }
-    lines.push("", `[Status page →](${statusUrl})`)
+    const lines = [
+      `### 2027 // ${title} — Running…`,
+      "",
+      "```",
+      "  ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒",
+      "```",
+    ]
+    const foot = footer()
+    if (foot) lines.push("", foot)
     return lines.join("\n")
   }
 
   if (status === "superseded") {
-    const lines = [heading, "", `${emoji} Eval superseded`]
-    if (sha7) {
-      lines.push("", `Commit: \`${sha7}\``)
-    }
-    lines.push("", `[Status page →](${statusUrl})`)
+    const lines = [`### 2027 // ${title} — Superseded`]
+    const foot = footer()
+    if (foot) lines.push("", foot)
     return lines.join("\n")
   }
 
-  if (status === "completed") {
-    const hasScore = report && report.score != null && report.grade
-    const statusLine = hasScore
-      ? `${emoji} **${report.grade} (${report.score}/100)**`
-      : `${emoji} Eval complete`
-    const lines = [heading, "", statusLine]
+  // status === "completed"
+  const hasScore = report && report.score != null && report.grade
+  const heading = hasScore
+    ? `### 2027 // ${title} — **${report.grade} ${report.score}/100**`
+    : `### 2027 // ${title} — Eval Complete`
+  const lines = [heading]
 
-    if (
-      hasScore &&
-      baseline &&
-      typeof baseline.score === "number" &&
-      typeof report.score === "number"
-    ) {
-      lines.push("", formatDelta(report.score - baseline.score))
-    }
+  const scoreBlock = renderScoreBlock(report, baseline)
+  if (scoreBlock) lines.push("", scoreBlock)
 
-    const metricsLine = renderMetricsLine(report && report.metrics, baseline && baseline.metrics)
-    if (metricsLine) {
-      lines.push("", metricsLine)
-    }
+  const table = renderMetricsTable(report && report.metrics, baseline && baseline.metrics)
+  if (table) lines.push("", table)
 
-    const tested = renderTestedLine(urlMapRaw)
-    if (tested) {
-      lines.push("", tested)
-    }
-    if (sha7) {
-      lines.push("", `Commit: \`${sha7}\``)
-    }
+  const tested = renderTestedLine(urlMapRaw)
+  if (tested) lines.push("", tested)
 
-    const linkParts = []
-    if (report && report.url) {
-      linkParts.push(`[View report →](${report.url})`)
-    }
-    const dashboardUrl = deriveDashboardUrl(report, statusUrl)
-    if (dashboardUrl) {
-      linkParts.push(`[Dashboard](${dashboardUrl})`)
-    }
-    if (linkParts.length > 0) {
-      lines.push("", linkParts.join(" · "))
-    }
-    return lines.join("\n")
-  }
+  const tailParts = []
+  if (sha7) tailParts.push(`Commit \`${sha7}\``)
+  if (report && report.url) tailParts.push(`[View Report →](${report.url})`)
+  const dashboardUrl = deriveDashboardUrl(report, statusUrl)
+  if (dashboardUrl) tailParts.push(`[Dashboard](${dashboardUrl})`)
+  if (tailParts.length) lines.push("", tailParts.join("  ·  "))
 
-  // Unreachable: all known statuses handled above and unknowns route to the
-  // running branch. Keep a safe default so renderComment never returns undefined.
-  return heading
+  return lines.join("\n")
 }
 
 function renderCommitStatus({ status, statusUrl, report, failureReason }) {
@@ -734,11 +750,10 @@ async function run({ core, github, context }) {
 module.exports = run
 module.exports.renderComment = renderComment
 module.exports.renderCommitStatus = renderCommitStatus
-module.exports.statusEmoji = statusEmoji
 module.exports.formatDelta = formatDelta
 module.exports.renderTestedLine = renderTestedLine
 module.exports.deriveDashboardUrl = deriveDashboardUrl
-module.exports.renderMetricsLine = renderMetricsLine
+module.exports.renderMetricsTable = renderMetricsTable
 module.exports.formatSecondsDelta = formatSecondsDelta
 module.exports.formatCostDelta = formatCostDelta
 module.exports.formatCountDelta = formatCountDelta

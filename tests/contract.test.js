@@ -15,7 +15,7 @@ const {
   formatDelta,
   renderTestedLine,
   deriveDashboardUrl,
-  renderMetricsLine,
+  renderMetricsTable,
   formatSecondsDelta,
   formatCostDelta,
   formatCountDelta,
@@ -169,7 +169,7 @@ test("renderComment includes failureReason for status=failed", () => {
   const sample = sampleRun()
   const reason = "Browser agent crashed on step 4 (sample reason)"
   const body = renderComment(renderArgsFromSample(sample, { status: "failed", failureReason: reason }))
-  assert.match(body, /Eval failed/)
+  assert.match(body, /Eval Failed/)
   assert.ok(body.includes(reason), "failureReason text must appear in body")
 })
 
@@ -222,28 +222,31 @@ test("formatSecondsDelta / formatCostDelta / formatCountDelta are defensive", ()
   assert.equal(formatCountDelta(-2), "-2")
 })
 
-test("renderMetricsLine renders only present fields, adds deltas only when both sides have them", () => {
+test("renderMetricsTable renders only present columns, adds ▼/▲ deltas only when both sides have them", () => {
   const current = {
     time: "2m 14s", timeSeconds: 134,
     cost: "$0.12", costUsd: 0.12,
     errors: 1, interruptions: 0,
   }
   const baseline = { timeSeconds: 120, costUsd: 0.15, errors: 0, interruptions: 0 }
-  const line = renderMetricsLine(current, baseline)
-  assert.match(line, /Time: 2m 14s \(\+14s\)/)
-  assert.match(line, /Cost: \$0\.12 \(-\$0\.03\)/)
-  assert.match(line, /Errors: 1 \(\+1\)/)
-  assert.match(line, /Interruptions: 0/) // no delta annotation since 0-0
-  assert.equal(line.includes("Interruptions: 0 ("), false, "zero-delta interruptions shouldn't render (+0)")
+  const table = renderMetricsTable(current, baseline)
+  // Header row lists every column we expect.
+  assert.match(table, /\|\s*Time\s*\|\s*Cost\s*\|\s*Errors\s*\|\s*Interruptions\s*\|/)
+  // Slower / cheaper / more-errors / same-interruptions → up-bad, down-good arrows.
+  assert.match(table, /2m 14s\s+▲ \+14s/)
+  assert.match(table, /\$0\.12\s+▼ -\$0\.03/)
+  assert.match(table, /\|\s*1\s+▲ \+1\s*\|/)
+  // Zero delta on interruptions → no arrow.
+  assert.equal(/Interruptions[\s\S]*0\s+[▼▲]/.test(table), false, "zero-delta should not render an arrow")
 
-  // Without baseline: just values, no deltas.
-  const onlyCurrent = renderMetricsLine(current, null)
-  assert.match(onlyCurrent, /Time: 2m 14s/)
-  assert.equal(onlyCurrent.includes("("), false, "no baseline → no parens")
+  // Without baseline: values only, no deltas.
+  const onlyCurrent = renderMetricsTable(current, null)
+  assert.match(onlyCurrent, /2m 14s/)
+  assert.equal(/[▼▲]/.test(onlyCurrent), false, "no baseline → no arrows")
 
   // Missing current → null result.
-  assert.equal(renderMetricsLine(null, baseline), null)
-  assert.equal(renderMetricsLine({}, baseline), null)
+  assert.equal(renderMetricsTable(null, baseline), null)
+  assert.equal(renderMetricsTable({}, baseline), null)
 })
 
 test("deriveDashboardUrl strips trailing slash before report-slug strip", () => {
