@@ -1,0 +1,58 @@
+name: 2027 Evals
+description: Run a 2027.dev eval on a PR's preview deployment and post results back to the PR.
+author: 2027.dev
+
+inputs:
+  api-key:
+    description: 2027.dev API key (create one at /<orgDomain>/settings)
+    required: true
+  api-base-url:
+    description: Base URL for the 2027 evals API
+    required: false
+    default: https://2027.dev/evals
+  prompt-id:
+    description: Prompt UUID. List available IDs via GET /api/v1/prompts.
+    required: true
+  url-map:
+    description: 'JSON object mapping production hostnames to preview URLs (full http(s) URLs required), e.g. {"acme.com":"https://deploy-preview-1.netlify.app"}'
+    required: true
+  deployment-url:
+    description: Preview deployment URL. Required when url-map has more than one entry.
+    required: false
+  wait-timeout-minutes:
+    description: How long to poll for completion before returning (action exits 0 on timeout)
+    required: false
+    default: "20"
+  poll-interval-seconds:
+    description: Seconds between status polls
+    required: false
+    default: "20"
+  timeout-fails:
+    description: When 'true', a polling timeout marks the commit status as failure (blocks merge). Default 'false' marks it success so the check doesn't get stuck pending.
+    required: false
+    default: "false"
+  github-token:
+    description: GitHub token for posting PR comments and commit statuses (defaults to github.token)
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run 2027 eval
+      uses: actions/github-script@v7
+      env:
+        EVALS_API_KEY: ${{ inputs.api-key }}
+        EVALS_API_BASE_URL: ${{ inputs.api-base-url }}
+        EVALS_PROMPT_ID: ${{ inputs.prompt-id }}
+        EVALS_URL_MAP: ${{ inputs.url-map }}
+        EVALS_DEPLOYMENT_URL: ${{ inputs.deployment-url }}
+        EVALS_WAIT_TIMEOUT_MINUTES: ${{ inputs.wait-timeout-minutes }}
+        EVALS_POLL_INTERVAL_SECONDS: ${{ inputs.poll-interval-seconds }}
+        EVALS_TIMEOUT_FAILS: ${{ inputs.timeout-fails }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const path = require('path')
+          const run = require(path.join(process.env.GITHUB_ACTION_PATH, 'scripts', 'run.js'))
+          await run({ core, github, context })
