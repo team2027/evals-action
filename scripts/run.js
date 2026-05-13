@@ -162,11 +162,29 @@ async function setCommitStatus(github, owner, repo, sha, params) {
   })
 }
 
-function statusEmoji(status) {
-  if (status === "completed") return "✅"
-  if (status === "failed") return "❌"
-  if (status === "superseded") return "↻"
-  return "🔄"
+function scoreBar(score, width = 20) {
+  const s = Math.max(0, Math.min(100, Number(score) || 0))
+  const filled = Math.round((s / 100) * width)
+  return "█".repeat(filled) + "░".repeat(Math.max(0, width - filled))
+}
+
+// For time/cost/errors/interruptions: lower is better. The existing delta
+// helpers return strings prefixed with "+"/"-"; map that sign to an arrow.
+// Anything not clearly signed passes through without an arrow.
+function metricArrow(deltaStr) {
+  if (!deltaStr) return ""
+  if (deltaStr.startsWith("-")) return `▼ ${deltaStr}`
+  if (deltaStr.startsWith("+")) return `▲ ${deltaStr}`
+  return deltaStr
+}
+
+// Server-supplied free-form strings (failureReason, keyFinding, verdict, etc.)
+// get rendered inside ```diff fences. If one of them contains a literal
+// triple-backtick run it would close the fence early and leak the rest into
+// the comment as raw markdown. Break any 3+ backtick run with zero-width
+// spaces — invisible to humans, neutralizes the fence parser.
+function sanitizeForFence(str) {
+  return String(str || "").replace(/`{3,}/g, (run) => run.split("").join("​"))
 }
 
 function formatDelta(delta) {
@@ -227,50 +245,6 @@ function formatCountDelta(n) {
   return n > 0 ? `+${n}` : String(n)
 }
 
-function renderMetricsLine(current, baseline) {
-  if (!current || typeof current !== "object") return null
-  const parts = []
-
-  if (current.time) {
-    let s = `Time: ${current.time}`
-    if (baseline && typeof current.timeSeconds === "number" && typeof baseline.timeSeconds === "number") {
-      const d = formatSecondsDelta(current.timeSeconds - baseline.timeSeconds)
-      if (d) s += ` (${d})`
-    }
-    parts.push(s)
-  }
-
-  if (current.cost) {
-    let s = `Cost: ${current.cost}`
-    if (baseline && typeof current.costUsd === "number" && typeof baseline.costUsd === "number") {
-      const d = formatCostDelta(current.costUsd - baseline.costUsd)
-      if (d) s += ` (${d})`
-    }
-    parts.push(s)
-  }
-
-  if (typeof current.errors === "number") {
-    let s = `Errors: ${current.errors}`
-    if (baseline && typeof baseline.errors === "number") {
-      const d = formatCountDelta(current.errors - baseline.errors)
-      if (d) s += ` (${d})`
-    }
-    parts.push(s)
-  }
-
-  if (typeof current.interruptions === "number") {
-    let s = `Interruptions: ${current.interruptions}`
-    if (baseline && typeof baseline.interruptions === "number") {
-      const d = formatCountDelta(current.interruptions - baseline.interruptions)
-      if (d) s += ` (${d})`
-    }
-    parts.push(s)
-  }
-
-  if (parts.length === 0) return null
-  return parts.join(" · ")
-}
-
 function deriveDashboardUrl(report, statusUrl) {
   if (report && report.url) {
     return report.url.replace(/\/+$/, "").replace(/\/reports\/[^/]+$/, "")
@@ -279,112 +253,198 @@ function deriveDashboardUrl(report, statusUrl) {
   return statusUrl.replace(/\/+$/, "").replace(/\/api\/v1\/runs\/[^/]+$/, "")
 }
 
+// "completed" + null score means the agent didn't actually finish the task.
+// Surface the highest-signal explanation the report carries — keyFinding
+// matches the "KEY FINDING" line on the dashboard report page.
+function dnfMessage(report, failureReason) {
+  if (report && typeof report.keyFinding === "string" && report.keyFinding.trim()) {
+    return report.keyFinding.trim()
+  }
+  if (report && report.summary && typeof report.summary.whatDidnt === "string" && report.summary.whatDidnt.trim()) {
+    return report.summary.whatDidnt.trim()
+  }
+  if (report && typeof report.verdict === "string" && report.verdict.trim()) {
+    return report.verdict.trim().split(/\r?\n/)[0]
+  }
+  if (failureReason) return String(failureReason)
+  return "Task did not complete — no score recorded"
+}
+
+function renderScoreBlock(report, baseline) {
+  if (!report || report.score == null) return null
+  const bar = scoreBar(report.score)
+  const hasBaseline = baseline && typeof baseline.score === "number"
+  if (!hasBaseline) {
+    return ["```", `  ${bar}`, "```"].join("\n")
+  }
+  const delta = report.score - baseline.score
+  const rounded = Math.round(delta * 10) / 10
+  const abs = Math.abs(rounded)
+  const display = Number.isInteger(abs) ? String(abs) : abs.toFixed(1)
+  let prefix
+  let annotation
+  if (rounded > 0) {
+    prefix = "+"
+    annotation = `▲ +${display} pts vs baseline`
+  } else if (rounded < 0) {
+    prefix = "-"
+    annotation = `▼ -${display} pts vs baseline`
+  } else {
+    prefix = " "
+    annotation = "Same as baseline"
+  }
+  return ["```diff", `${prefix} ${bar}   ${annotation}`, "```"].join("\n")
+}
+
+// Markdown table of the metrics the run reports, with ▼/▲ deltas where a
+// baseline is available. Only columns the current run populates show up.
+function renderMetricsTable(current, baseline) {
+  if (!current || typeof current !== "object") return null
+  const cols = []
+
+  if (current.time) {
+    let v = current.time
+    if (baseline && typeof current.timeSeconds === "number" && typeof baseline.timeSeconds === "number") {
+      const d = formatSecondsDelta(current.timeSeconds - baseline.timeSeconds)
+      if (d) v += `  ${metricArrow(d)}`
+    }
+    cols.push({ header: "Time", value: v })
+  }
+  if (current.cost) {
+    let v = current.cost
+    if (baseline && typeof current.costUsd === "number" && typeof baseline.costUsd === "number") {
+      const d = formatCostDelta(current.costUsd - baseline.costUsd)
+      if (d) v += `  ${metricArrow(d)}`
+    }
+    cols.push({ header: "Cost", value: v })
+  }
+  if (typeof current.errors === "number") {
+    let v = String(current.errors)
+    if (baseline && typeof baseline.errors === "number") {
+      const d = formatCountDelta(current.errors - baseline.errors)
+      if (d) v += `  ${metricArrow(d)}`
+    }
+    cols.push({ header: "Errors", value: v })
+  }
+  if (typeof current.interruptions === "number") {
+    let v = String(current.interruptions)
+    if (baseline && typeof baseline.interruptions === "number") {
+      const d = formatCountDelta(current.interruptions - baseline.interruptions)
+      if (d) v += `  ${metricArrow(d)}`
+    }
+    cols.push({ header: "Interruptions", value: v })
+  }
+
+  if (cols.length === 0) return null
+  const header = `| ${cols.map((c) => c.header).join(" | ")} |`
+  const sep = `| ${cols.map(() => "---").join(" | ")} |`
+  const row = `| ${cols.map((c) => c.value).join(" | ")} |`
+  return [header, sep, row].join("\n")
+}
+
 // Client-side renderers — server returns minimal status now, action renders
 // the comment + commit status from { status, prompt.title, report?, baseline?, failureReason }.
-function renderComment({ status, promptTitle, statusUrl, report, baseline, failureReason, sha, urlMapRaw }) {
+function renderComment({ status, promptTitle, statusUrl, runUrl, report, baseline, failureReason, sha, urlMapRaw }) {
   const title = promptTitle || "(unknown)"
   const sha7 = sha ? String(sha).slice(0, 7) : ""
-  const emoji = statusEmoji(status)
-  const heading = `## 2027 AX Eval — ${title}`
+  const statusLink = runUrl || statusUrl
+
+  const footer = () => {
+    const parts = []
+    if (sha7) parts.push(`Commit \`${sha7}\``)
+    if (statusLink) parts.push(`[Status →](${statusLink})`)
+    return parts.length ? parts.join("  ·  ") : null
+  }
 
   if (status === "failed") {
-    const lines = [heading, "", `${emoji} **Eval failed**`]
+    const lines = [`### 2027 // ${title} — Eval failed`]
     if (failureReason) {
-      lines.push("", failureReason)
+      lines.push("", "```diff", `- ${sanitizeForFence(singleLine(failureReason))}`, "```")
     }
-    if (sha7) {
-      lines.push("", `Commit: \`${sha7}\``)
-    }
-    lines.push("", `[Status page →](${statusUrl})`)
+    const foot = footer()
+    if (foot) lines.push("", foot)
     return lines.join("\n")
   }
 
-  // Treat any unknown status as still-running so the comment stays informative.
   if (status !== "completed" && status !== "superseded") {
-    const lines = [heading, "", `${emoji} Running eval`]
-    if (sha7) {
-      lines.push("", `Commit: \`${sha7}\``)
-    }
-    lines.push("", `[Status page →](${statusUrl})`)
+    const lines = [
+      `### 2027 // ${title} — Running…`,
+      "",
+      "```",
+      "  ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒",
+      "```",
+    ]
+    const foot = footer()
+    if (foot) lines.push("", foot)
     return lines.join("\n")
   }
 
   if (status === "superseded") {
-    const lines = [heading, "", `${emoji} Eval superseded`]
-    if (sha7) {
-      lines.push("", `Commit: \`${sha7}\``)
-    }
-    lines.push("", `[Status page →](${statusUrl})`)
+    const lines = [`### 2027 // ${title} — Superseded`]
+    const foot = footer()
+    if (foot) lines.push("", foot)
     return lines.join("\n")
   }
 
-  if (status === "completed") {
-    const hasScore = report && report.score != null && report.grade
-    const statusLine = hasScore
-      ? `${emoji} **${report.grade} (${report.score}/100)**`
-      : `${emoji} Eval complete`
-    const lines = [heading, "", statusLine]
+  // status === "completed"
+  const hasScore = report && report.score != null && report.grade
+  const heading = hasScore
+    ? `### 2027 // ${title} — **${report.grade} ${report.score}/100**`
+    : `### 2027 // ${title} — Did not finish`
+  const lines = [heading]
 
-    if (
-      hasScore &&
-      baseline &&
-      typeof baseline.score === "number" &&
-      typeof report.score === "number"
-    ) {
-      lines.push("", formatDelta(report.score - baseline.score))
-    }
-
-    const metricsLine = renderMetricsLine(report && report.metrics, baseline && baseline.metrics)
-    if (metricsLine) {
-      lines.push("", metricsLine)
-    }
-
-    const tested = renderTestedLine(urlMapRaw)
-    if (tested) {
-      lines.push("", tested)
-    }
-    if (sha7) {
-      lines.push("", `Commit: \`${sha7}\``)
-    }
-
-    const linkParts = []
-    if (report && report.url) {
-      linkParts.push(`[View report →](${report.url})`)
-    }
-    const dashboardUrl = deriveDashboardUrl(report, statusUrl)
-    if (dashboardUrl) {
-      linkParts.push(`[Dashboard](${dashboardUrl})`)
-    }
-    if (linkParts.length > 0) {
-      lines.push("", linkParts.join(" · "))
-    }
-    return lines.join("\n")
+  if (!hasScore) {
+    const msg = sanitizeForFence(singleLine(dnfMessage(report, failureReason)))
+    if (msg) lines.push("", "```diff", `- ${msg}`, "```")
   }
 
-  // Unreachable: all known statuses handled above and unknowns route to the
-  // running branch. Keep a safe default so renderComment never returns undefined.
-  return heading
+  const scoreBlock = renderScoreBlock(report, baseline)
+  if (scoreBlock) lines.push("", scoreBlock)
+
+  const table = renderMetricsTable(report && report.metrics, baseline && baseline.metrics)
+  if (table) lines.push("", table)
+
+  const tested = renderTestedLine(urlMapRaw)
+  if (tested) lines.push("", tested)
+
+  const tailParts = []
+  if (sha7) tailParts.push(`Commit \`${sha7}\``)
+  if (report && report.url) tailParts.push(`[View report →](${report.url})`)
+  const dashboardUrl = deriveDashboardUrl(report, statusUrl)
+  if (dashboardUrl) tailParts.push(`[Dashboard](${dashboardUrl})`)
+  if (tailParts.length) lines.push("", tailParts.join("  ·  "))
+
+  return lines.join("\n")
 }
 
-function renderCommitStatus({ status, statusUrl, report, failureReason }) {
+function renderCommitStatus({ status, statusUrl, runUrl, report, failureReason }) {
+  const statusLink = runUrl || statusUrl
   if (status === "pending" || status === "running") {
-    return { state: "pending", description: "Running eval...", targetUrl: statusUrl }
+    return { state: "pending", description: "Running eval...", targetUrl: statusLink }
   }
   if (status === "completed") {
+    const hasScore = report && report.score != null
+    if (!hasScore) {
+      return {
+        state: "failure",
+        description: `Did not finish — ${dnfMessage(report, failureReason)}`,
+        targetUrl: report?.url || statusLink,
+      }
+    }
     if (report?.url) {
       return { state: "success", description: "Completed — see report", targetUrl: report.url }
     }
-    return { state: "success", description: "Completed — see status page", targetUrl: statusUrl }
+    return { state: "success", description: "Completed — see status page", targetUrl: statusLink }
   }
   if (status === "failed") {
     // setCommitStatus handles singleLine + truncate; pass raw failureReason here.
     const description = failureReason || "Eval failed — see status page"
-    return { state: "error", description, targetUrl: statusUrl }
+    return { state: "error", description, targetUrl: statusLink }
   }
   if (status === "superseded") {
-    return { state: "success", description: "Superseded by newer commit", targetUrl: statusUrl }
+    return { state: "success", description: "Superseded by newer commit", targetUrl: statusLink }
   }
-  return { state: "pending", description: "Running eval...", targetUrl: statusUrl }
+  return { state: "pending", description: "Running eval...", targetUrl: statusLink }
 }
 
 function extractPrFromContext(context) {
@@ -563,13 +623,17 @@ async function run({ core, github, context }) {
   core.setOutput("run-id", runId)
   core.setOutput("status-url", statusUrl)
 
-  const runUrl = `${apiBase}/api/v1/runs/${encodeURIComponent(runId)}`
+  const runApiUrl = `${apiBase}/api/v1/runs/${encodeURIComponent(runId)}`
   const marker = STICKY_MARKER(promptId)
   let promptTitle
+  // Human-facing dashboard URL for this run, returned by the API alongside
+  // statusUrl. Optional — falls back to statusUrl in renderers if absent.
+  let runUrl
 
   try {
-    const initial = await getJson(runUrl, apiKey)
+    const initial = await getJson(runApiUrl, apiKey)
     promptTitle = initial.prompt && initial.prompt.title
+    runUrl = initial.runUrl
   } catch (e) {
     if (e instanceof HttpStatusError && [401, 403, 404].includes(e.status)) {
       core.setFailed(`fatal auth/lookup error fetching initial run state: ${e.message}`)
@@ -587,13 +651,13 @@ async function run({ core, github, context }) {
       repo,
       prNumber,
       marker,
-      renderComment({ status: "pending", promptTitle, statusUrl, report: null, baseline: null, failureReason: null, sha, urlMapRaw }),
+      renderComment({ status: "pending", promptTitle, statusUrl, runUrl, report: null, baseline: null, failureReason: null, sha, urlMapRaw }),
       core,
     )
   }
   if (!skipStatus) {
     try {
-      const initialStatus = renderCommitStatus({ status: "pending", statusUrl, report: null, failureReason: null })
+      const initialStatus = renderCommitStatus({ status: "pending", statusUrl, runUrl, report: null, failureReason: null })
       await setCommitStatus(github, owner, repo, sha, { ...initialStatus, context: ctxName })
     } catch (e) {
       core.warning(`failed to set initial commit status: ${e.message}`)
@@ -614,8 +678,9 @@ async function run({ core, github, context }) {
     if (Date.now() >= deadline) break
     let current
     try {
-      current = await getJson(runUrl, apiKey)
+      current = await getJson(runApiUrl, apiKey)
       backoffSec = pollIntervalS // reset on success
+      runUrl = current.runUrl || runUrl
     } catch (e) {
       if (e instanceof HttpStatusError) {
         if ([401, 403, 404].includes(e.status)) {
@@ -650,8 +715,9 @@ async function run({ core, github, context }) {
         for (let i = 0; i < GRACE_POLLS; i++) {
           await sleep(GRACE_INTERVAL_MS)
           try {
-            const retry = await getJson(runUrl, apiKey)
+            const retry = await getJson(runApiUrl, apiKey)
             last = retry
+            runUrl = retry.runUrl || runUrl
             if (retry.report || retry.failureReason) break
           } catch (e) {
             core.warning(`grace-period poll failed (ignoring): ${e.message}`)
@@ -688,11 +754,11 @@ async function run({ core, github, context }) {
 
   if (finalStatus === "completed" || finalStatus === "failed" || finalStatus === "superseded") {
     if (!skipComment) {
-      const body = renderComment({ status: finalStatus, promptTitle, statusUrl, report, baseline, failureReason, sha, urlMapRaw })
+      const body = renderComment({ status: finalStatus, promptTitle, statusUrl, runUrl, report, baseline, failureReason, sha, urlMapRaw })
       await upsertComment(github, owner, repo, prNumber, marker, body, core)
     }
     if (!skipStatus) {
-      const cs = renderCommitStatus({ status: finalStatus, statusUrl, report, failureReason })
+      const cs = renderCommitStatus({ status: finalStatus, statusUrl, runUrl, report, failureReason })
       try {
         await setCommitStatus(github, owner, repo, sha, { ...cs, context: ctxName })
       } catch (e) {
@@ -707,7 +773,7 @@ async function run({ core, github, context }) {
 
   // timeout — still running. Keep PR check unblocked unless timeout-fails=true.
   if (!skipComment) {
-    const timeoutBody = renderComment({ status: "running", promptTitle, statusUrl, report: null, baseline: null, failureReason: null, sha, urlMapRaw })
+    const timeoutBody = renderComment({ status: "running", promptTitle, statusUrl, runUrl, report: null, baseline: null, failureReason: null, sha, urlMapRaw })
     await upsertComment(github, owner, repo, prNumber, marker, timeoutBody, core)
   }
   const timeoutState = timeoutFails ? "failure" : "success"
@@ -719,7 +785,7 @@ async function run({ core, github, context }) {
       await setCommitStatus(github, owner, repo, sha, {
         state: timeoutState,
         description: timeoutDescription,
-        targetUrl: statusUrl,
+        targetUrl: runUrl || statusUrl,
         context: ctxName,
       })
     } catch (e) {
@@ -734,11 +800,10 @@ async function run({ core, github, context }) {
 module.exports = run
 module.exports.renderComment = renderComment
 module.exports.renderCommitStatus = renderCommitStatus
-module.exports.statusEmoji = statusEmoji
 module.exports.formatDelta = formatDelta
 module.exports.renderTestedLine = renderTestedLine
 module.exports.deriveDashboardUrl = deriveDashboardUrl
-module.exports.renderMetricsLine = renderMetricsLine
+module.exports.renderMetricsTable = renderMetricsTable
 module.exports.formatSecondsDelta = formatSecondsDelta
 module.exports.formatCostDelta = formatCostDelta
 module.exports.formatCountDelta = formatCountDelta

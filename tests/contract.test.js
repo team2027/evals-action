@@ -15,7 +15,7 @@ const {
   formatDelta,
   renderTestedLine,
   deriveDashboardUrl,
-  renderMetricsLine,
+  renderMetricsTable,
   formatSecondsDelta,
   formatCostDelta,
   formatCountDelta,
@@ -53,6 +53,9 @@ const RUN_FIELDS_THE_ACTION_READS = [
   "runId",
   "status",
   "statusUrl",
+  // Human-facing dashboard URL for this run — preferred over statusUrl for
+  // links surfaced to humans (PR comment "Status →", commit-status targetUrl).
+  "runUrl",
   "failureReason",
   // Prompt — for the comment heading
   "prompt.title",
@@ -109,6 +112,7 @@ function renderArgsFromSample(sample, overrides = {}) {
     status: sample.status,
     promptTitle: sample.prompt?.title,
     statusUrl: sample.statusUrl,
+    runUrl: sample.runUrl,
     report: sample.report,
     baseline: sample.baseline,
     failureReason: sample.failureReason,
@@ -165,6 +169,86 @@ test("renderComment includes score+grade when the spec declares them and the sam
   assert.match(body, new RegExp(gradeEscaped), "grade must appear in completed comment")
 })
 
+test("renderComment communicates 'Did not finish' when status=completed but score is null", () => {
+  const body = renderComment({
+    status: "completed",
+    promptTitle: "Install MCP",
+    statusUrl: "https://x.dev/evals/api/v1/runs/abc",
+    report: {
+      score: null,
+      grade: null,
+      url: "https://x.dev/evals/acme/reports/abc",
+      keyFinding: "Google MFA/TOTP blocked API key retrieval and prevented task completion.",
+      metrics: { time: "0m 16s", cost: "$0.26", errors: 0, interruptions: 1 },
+    },
+    baseline: null,
+    failureReason: null,
+    sha: "abcdef1234567890",
+    urlMapRaw: null,
+  })
+  assert.match(body, /Did not finish/)
+  assert.match(body, /Google MFA\/TOTP blocked API key retrieval/)
+  assert.equal(/Eval complete/i.test(body), false, "must not read as success when score is null")
+  assert.equal(/\*\*[A-F][+-]? \d+\/100\*\*/.test(body), false, "must not show a grade/score header when score is null")
+})
+
+test("renderCommitStatus marks completed+null-score as failure with DNF explanation", () => {
+  const cs = renderCommitStatus({
+    status: "completed",
+    statusUrl: "https://x.dev/evals/api/v1/runs/abc",
+    report: { score: null, grade: null, keyFinding: "MFA blocked login.", url: "https://x.dev/evals/acme/reports/abc" },
+    failureReason: null,
+  })
+  assert.equal(cs.state, "failure")
+  assert.match(cs.description, /Did not finish/)
+  assert.match(cs.description, /MFA blocked login/)
+  assert.equal(cs.targetUrl, "https://x.dev/evals/acme/reports/abc")
+})
+
+test("renderComment neutralizes triple-backtick runs in server-supplied strings so fences stay balanced", () => {
+  // Realistic risk: LLM-generated keyFinding / failureReason may quote a code
+  // snippet with ``` which would close the diff fence early.
+  const malicious = "Crashed on ```\nthrow new Error()\n``` block"
+  const fenceCount = (s) => (s.match(/^```/gm) || []).length
+  // Strip the renderer's own fence lines, then assert no raw triple-backticks
+  // survived from the input — those would have closed the fence early.
+  const stripFences = (s) => s.replace(/^```diff$/gm, "").replace(/^```$/gm, "")
+
+  const failedBody = renderComment({
+    status: "failed",
+    promptTitle: "T",
+    statusUrl: "https://x/api/v1/runs/a",
+    report: null,
+    baseline: null,
+    failureReason: malicious,
+    sha: "abcdef1",
+    urlMapRaw: null,
+  })
+  assert.equal(
+    fenceCount(failedBody) % 2,
+    0,
+    `failed-body fence count must be even (was ${fenceCount(failedBody)}):\n${failedBody}`,
+  )
+  assert.equal(stripFences(failedBody).includes("```"), false, "raw ``` must be neutralized in failed body")
+
+  const dnfBody = renderComment({
+    status: "completed",
+    promptTitle: "T",
+    statusUrl: "https://x/api/v1/runs/a",
+    report: { score: null, grade: null, keyFinding: malicious, url: "https://x/r" },
+    baseline: null,
+    failureReason: null,
+    sha: "abcdef1",
+    urlMapRaw: null,
+  })
+  assert.equal(
+    fenceCount(dnfBody) % 2,
+    0,
+    `dnf-body fence count must be even (was ${fenceCount(dnfBody)}):\n${dnfBody}`,
+  )
+  assert.equal(stripFences(dnfBody).includes("```"), false, "raw ``` must be neutralized in DNF body")
+})
+
 test("renderComment includes failureReason for status=failed", () => {
   const sample = sampleRun()
   const reason = "Browser agent crashed on step 4 (sample reason)"
@@ -173,15 +257,30 @@ test("renderComment includes failureReason for status=failed", () => {
   assert.ok(body.includes(reason), "failureReason text must appear in body")
 })
 
-test("renderComment always references the statusUrl somewhere when present", () => {
+test("renderComment links to runUrl when present, falling back to statusUrl otherwise", () => {
   const sample = sampleRun()
+  const runUrl = "https://2027.dev/evals/acme/runs/abc-123"
   for (const status of ["pending", "running", "failed", "superseded"]) {
-    const body = renderComment(renderArgsFromSample(sample, { status }))
-    assert.ok(
-      body.includes(sample.statusUrl),
-      `statusUrl missing from rendered body for status=${status}`,
-    )
+    const withRun = renderComment(renderArgsFromSample(sample, { status, runUrl }))
+    assert.ok(withRun.includes(runUrl), `runUrl not used for status=${status}`)
+    assert.equal(withRun.includes(sample.statusUrl), false, `statusUrl should be hidden when runUrl is set (status=${status})`)
+
+    const noRun = renderComment(renderArgsFromSample(sample, { status, runUrl: undefined }))
+    assert.ok(noRun.includes(sample.statusUrl), `statusUrl fallback missing for status=${status}`)
   }
+})
+
+test("renderCommitStatus uses runUrl as targetUrl when present", () => {
+  const sample = sampleRun()
+  const runUrl = "https://2027.dev/evals/acme/runs/abc-123"
+  const cs = renderCommitStatus({
+    status: "running",
+    statusUrl: sample.statusUrl,
+    runUrl,
+    report: null,
+    failureReason: null,
+  })
+  assert.equal(cs.targetUrl, runUrl)
 })
 
 test("formatDelta is well-behaved for sane numeric inputs", () => {
@@ -222,28 +321,31 @@ test("formatSecondsDelta / formatCostDelta / formatCountDelta are defensive", ()
   assert.equal(formatCountDelta(-2), "-2")
 })
 
-test("renderMetricsLine renders only present fields, adds deltas only when both sides have them", () => {
+test("renderMetricsTable renders only present columns, adds ▼/▲ deltas only when both sides have them", () => {
   const current = {
     time: "2m 14s", timeSeconds: 134,
     cost: "$0.12", costUsd: 0.12,
     errors: 1, interruptions: 0,
   }
   const baseline = { timeSeconds: 120, costUsd: 0.15, errors: 0, interruptions: 0 }
-  const line = renderMetricsLine(current, baseline)
-  assert.match(line, /Time: 2m 14s \(\+14s\)/)
-  assert.match(line, /Cost: \$0\.12 \(-\$0\.03\)/)
-  assert.match(line, /Errors: 1 \(\+1\)/)
-  assert.match(line, /Interruptions: 0/) // no delta annotation since 0-0
-  assert.equal(line.includes("Interruptions: 0 ("), false, "zero-delta interruptions shouldn't render (+0)")
+  const table = renderMetricsTable(current, baseline)
+  // Header row lists every column we expect.
+  assert.match(table, /\|\s*Time\s*\|\s*Cost\s*\|\s*Errors\s*\|\s*Interruptions\s*\|/)
+  // Slower / cheaper / more-errors / same-interruptions → up-bad, down-good arrows.
+  assert.match(table, /2m 14s\s+▲ \+14s/)
+  assert.match(table, /\$0\.12\s+▼ -\$0\.03/)
+  assert.match(table, /\|\s*1\s+▲ \+1\s*\|/)
+  // Zero delta on interruptions → no arrow.
+  assert.equal(/Interruptions[\s\S]*0\s+[▼▲]/.test(table), false, "zero-delta should not render an arrow")
 
-  // Without baseline: just values, no deltas.
-  const onlyCurrent = renderMetricsLine(current, null)
-  assert.match(onlyCurrent, /Time: 2m 14s/)
-  assert.equal(onlyCurrent.includes("("), false, "no baseline → no parens")
+  // Without baseline: values only, no deltas.
+  const onlyCurrent = renderMetricsTable(current, null)
+  assert.match(onlyCurrent, /2m 14s/)
+  assert.equal(/[▼▲]/.test(onlyCurrent), false, "no baseline → no arrows")
 
   // Missing current → null result.
-  assert.equal(renderMetricsLine(null, baseline), null)
-  assert.equal(renderMetricsLine({}, baseline), null)
+  assert.equal(renderMetricsTable(null, baseline), null)
+  assert.equal(renderMetricsTable({}, baseline), null)
 })
 
 test("deriveDashboardUrl strips trailing slash before report-slug strip", () => {
