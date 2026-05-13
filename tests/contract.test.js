@@ -210,6 +210,9 @@ test("renderComment neutralizes triple-backtick runs in server-supplied strings 
   // snippet with ``` which would close the diff fence early.
   const malicious = "Crashed on ```\nthrow new Error()\n``` block"
   const fenceCount = (s) => (s.match(/^```/gm) || []).length
+  // Strip the renderer's own fence lines, then assert no raw triple-backticks
+  // survived from the input — those would have closed the fence early.
+  const stripFences = (s) => s.replace(/^```diff$/gm, "").replace(/^```$/gm, "")
 
   const failedBody = renderComment({
     status: "failed",
@@ -226,8 +229,7 @@ test("renderComment neutralizes triple-backtick runs in server-supplied strings 
     0,
     `failed-body fence count must be even (was ${fenceCount(failedBody)}):\n${failedBody}`,
   )
-  // Original ``` runs must not survive verbatim — they'd close the fence.
-  assert.equal(/```\s*\n?[^d]/.test(failedBody.replace(/^```diff$/m, "").replace(/^```$/m, "")), false)
+  assert.equal(stripFences(failedBody).includes("```"), false, "raw ``` must be neutralized in failed body")
 
   const dnfBody = renderComment({
     status: "completed",
@@ -244,6 +246,7 @@ test("renderComment neutralizes triple-backtick runs in server-supplied strings 
     0,
     `dnf-body fence count must be even (was ${fenceCount(dnfBody)}):\n${dnfBody}`,
   )
+  assert.equal(stripFences(dnfBody).includes("```"), false, "raw ``` must be neutralized in DNF body")
 })
 
 test("renderComment includes failureReason for status=failed", () => {
