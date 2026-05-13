@@ -332,14 +332,15 @@ function renderMetricsTable(current, baseline) {
 
 // Client-side renderers — server returns minimal status now, action renders
 // the comment + commit status from { status, prompt.title, report?, baseline?, failureReason }.
-function renderComment({ status, promptTitle, statusUrl, report, baseline, failureReason, sha, urlMapRaw }) {
+function renderComment({ status, promptTitle, statusUrl, runUrl, report, baseline, failureReason, sha, urlMapRaw }) {
   const title = promptTitle || "(unknown)"
   const sha7 = sha ? String(sha).slice(0, 7) : ""
+  const statusLink = runUrl || statusUrl
 
   const footer = () => {
     const parts = []
     if (sha7) parts.push(`Commit \`${sha7}\``)
-    if (statusUrl) parts.push(`[Status →](${statusUrl})`)
+    if (statusLink) parts.push(`[Status →](${statusLink})`)
     return parts.length ? parts.join("  ·  ") : null
   }
 
@@ -404,9 +405,10 @@ function renderComment({ status, promptTitle, statusUrl, report, baseline, failu
   return lines.join("\n")
 }
 
-function renderCommitStatus({ status, statusUrl, report, failureReason }) {
+function renderCommitStatus({ status, statusUrl, runUrl, report, failureReason }) {
+  const statusLink = runUrl || statusUrl
   if (status === "pending" || status === "running") {
-    return { state: "pending", description: "Running eval...", targetUrl: statusUrl }
+    return { state: "pending", description: "Running eval...", targetUrl: statusLink }
   }
   if (status === "completed") {
     const hasScore = report && report.score != null
@@ -414,23 +416,23 @@ function renderCommitStatus({ status, statusUrl, report, failureReason }) {
       return {
         state: "failure",
         description: `Did not finish — ${dnfMessage(report, failureReason)}`,
-        targetUrl: report?.url || statusUrl,
+        targetUrl: report?.url || statusLink,
       }
     }
     if (report?.url) {
       return { state: "success", description: "Completed — see report", targetUrl: report.url }
     }
-    return { state: "success", description: "Completed — see status page", targetUrl: statusUrl }
+    return { state: "success", description: "Completed — see status page", targetUrl: statusLink }
   }
   if (status === "failed") {
     // setCommitStatus handles singleLine + truncate; pass raw failureReason here.
     const description = failureReason || "Eval failed — see status page"
-    return { state: "error", description, targetUrl: statusUrl }
+    return { state: "error", description, targetUrl: statusLink }
   }
   if (status === "superseded") {
-    return { state: "success", description: "Superseded by newer commit", targetUrl: statusUrl }
+    return { state: "success", description: "Superseded by newer commit", targetUrl: statusLink }
   }
-  return { state: "pending", description: "Running eval...", targetUrl: statusUrl }
+  return { state: "pending", description: "Running eval...", targetUrl: statusLink }
 }
 
 function extractPrFromContext(context) {
@@ -609,13 +611,17 @@ async function run({ core, github, context }) {
   core.setOutput("run-id", runId)
   core.setOutput("status-url", statusUrl)
 
-  const runUrl = `${apiBase}/api/v1/runs/${encodeURIComponent(runId)}`
+  const runApiUrl = `${apiBase}/api/v1/runs/${encodeURIComponent(runId)}`
   const marker = STICKY_MARKER(promptId)
   let promptTitle
+  // Human-facing dashboard URL for this run, returned by the API alongside
+  // statusUrl. Optional — falls back to statusUrl in renderers if absent.
+  let runUrl
 
   try {
-    const initial = await getJson(runUrl, apiKey)
+    const initial = await getJson(runApiUrl, apiKey)
     promptTitle = initial.prompt && initial.prompt.title
+    runUrl = initial.runUrl
   } catch (e) {
     if (e instanceof HttpStatusError && [401, 403, 404].includes(e.status)) {
       core.setFailed(`fatal auth/lookup error fetching initial run state: ${e.message}`)
@@ -633,13 +639,13 @@ async function run({ core, github, context }) {
       repo,
       prNumber,
       marker,
-      renderComment({ status: "pending", promptTitle, statusUrl, report: null, baseline: null, failureReason: null, sha, urlMapRaw }),
+      renderComment({ status: "pending", promptTitle, statusUrl, runUrl, report: null, baseline: null, failureReason: null, sha, urlMapRaw }),
       core,
     )
   }
   if (!skipStatus) {
     try {
-      const initialStatus = renderCommitStatus({ status: "pending", statusUrl, report: null, failureReason: null })
+      const initialStatus = renderCommitStatus({ status: "pending", statusUrl, runUrl, report: null, failureReason: null })
       await setCommitStatus(github, owner, repo, sha, { ...initialStatus, context: ctxName })
     } catch (e) {
       core.warning(`failed to set initial commit status: ${e.message}`)
@@ -660,8 +666,9 @@ async function run({ core, github, context }) {
     if (Date.now() >= deadline) break
     let current
     try {
-      current = await getJson(runUrl, apiKey)
+      current = await getJson(runApiUrl, apiKey)
       backoffSec = pollIntervalS // reset on success
+      runUrl = current.runUrl || runUrl
     } catch (e) {
       if (e instanceof HttpStatusError) {
         if ([401, 403, 404].includes(e.status)) {
@@ -696,8 +703,9 @@ async function run({ core, github, context }) {
         for (let i = 0; i < GRACE_POLLS; i++) {
           await sleep(GRACE_INTERVAL_MS)
           try {
-            const retry = await getJson(runUrl, apiKey)
+            const retry = await getJson(runApiUrl, apiKey)
             last = retry
+            runUrl = retry.runUrl || runUrl
             if (retry.report || retry.failureReason) break
           } catch (e) {
             core.warning(`grace-period poll failed (ignoring): ${e.message}`)
@@ -734,11 +742,11 @@ async function run({ core, github, context }) {
 
   if (finalStatus === "completed" || finalStatus === "failed" || finalStatus === "superseded") {
     if (!skipComment) {
-      const body = renderComment({ status: finalStatus, promptTitle, statusUrl, report, baseline, failureReason, sha, urlMapRaw })
+      const body = renderComment({ status: finalStatus, promptTitle, statusUrl, runUrl, report, baseline, failureReason, sha, urlMapRaw })
       await upsertComment(github, owner, repo, prNumber, marker, body, core)
     }
     if (!skipStatus) {
-      const cs = renderCommitStatus({ status: finalStatus, statusUrl, report, failureReason })
+      const cs = renderCommitStatus({ status: finalStatus, statusUrl, runUrl, report, failureReason })
       try {
         await setCommitStatus(github, owner, repo, sha, { ...cs, context: ctxName })
       } catch (e) {
@@ -753,7 +761,7 @@ async function run({ core, github, context }) {
 
   // timeout — still running. Keep PR check unblocked unless timeout-fails=true.
   if (!skipComment) {
-    const timeoutBody = renderComment({ status: "running", promptTitle, statusUrl, report: null, baseline: null, failureReason: null, sha, urlMapRaw })
+    const timeoutBody = renderComment({ status: "running", promptTitle, statusUrl, runUrl, report: null, baseline: null, failureReason: null, sha, urlMapRaw })
     await upsertComment(github, owner, repo, prNumber, marker, timeoutBody, core)
   }
   const timeoutState = timeoutFails ? "failure" : "success"
@@ -765,7 +773,7 @@ async function run({ core, github, context }) {
       await setCommitStatus(github, owner, repo, sha, {
         state: timeoutState,
         description: timeoutDescription,
-        targetUrl: statusUrl,
+        targetUrl: runUrl || statusUrl,
         context: ctxName,
       })
     } catch (e) {

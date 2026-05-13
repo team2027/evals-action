@@ -53,6 +53,9 @@ const RUN_FIELDS_THE_ACTION_READS = [
   "runId",
   "status",
   "statusUrl",
+  // Human-facing dashboard URL for this run — preferred over statusUrl for
+  // links surfaced to humans (PR comment "Status →", commit-status targetUrl).
+  "runUrl",
   "failureReason",
   // Prompt — for the comment heading
   "prompt.title",
@@ -109,6 +112,7 @@ function renderArgsFromSample(sample, overrides = {}) {
     status: sample.status,
     promptTitle: sample.prompt?.title,
     statusUrl: sample.statusUrl,
+    runUrl: sample.runUrl,
     report: sample.report,
     baseline: sample.baseline,
     failureReason: sample.failureReason,
@@ -209,15 +213,30 @@ test("renderComment includes failureReason for status=failed", () => {
   assert.ok(body.includes(reason), "failureReason text must appear in body")
 })
 
-test("renderComment always references the statusUrl somewhere when present", () => {
+test("renderComment links to runUrl when present, falling back to statusUrl otherwise", () => {
   const sample = sampleRun()
+  const runUrl = "https://2027.dev/evals/acme/runs/abc-123"
   for (const status of ["pending", "running", "failed", "superseded"]) {
-    const body = renderComment(renderArgsFromSample(sample, { status }))
-    assert.ok(
-      body.includes(sample.statusUrl),
-      `statusUrl missing from rendered body for status=${status}`,
-    )
+    const withRun = renderComment(renderArgsFromSample(sample, { status, runUrl }))
+    assert.ok(withRun.includes(runUrl), `runUrl not used for status=${status}`)
+    assert.equal(withRun.includes(sample.statusUrl), false, `statusUrl should be hidden when runUrl is set (status=${status})`)
+
+    const noRun = renderComment(renderArgsFromSample(sample, { status, runUrl: undefined }))
+    assert.ok(noRun.includes(sample.statusUrl), `statusUrl fallback missing for status=${status}`)
   }
+})
+
+test("renderCommitStatus uses runUrl as targetUrl when present", () => {
+  const sample = sampleRun()
+  const runUrl = "https://2027.dev/evals/acme/runs/abc-123"
+  const cs = renderCommitStatus({
+    status: "running",
+    statusUrl: sample.statusUrl,
+    runUrl,
+    report: null,
+    failureReason: null,
+  })
+  assert.equal(cs.targetUrl, runUrl)
 })
 
 test("formatDelta is well-behaved for sane numeric inputs", () => {
