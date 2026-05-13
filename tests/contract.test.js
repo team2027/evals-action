@@ -165,6 +165,42 @@ test("renderComment includes score+grade when the spec declares them and the sam
   assert.match(body, new RegExp(gradeEscaped), "grade must appear in completed comment")
 })
 
+test("renderComment communicates 'Did Not Finish' when status=completed but score is null", () => {
+  const body = renderComment({
+    status: "completed",
+    promptTitle: "Install MCP",
+    statusUrl: "https://x.dev/evals/api/v1/runs/abc",
+    report: {
+      score: null,
+      grade: null,
+      url: "https://x.dev/evals/acme/reports/abc",
+      keyFinding: "Google MFA/TOTP blocked API key retrieval and prevented task completion.",
+      metrics: { time: "0m 16s", cost: "$0.26", errors: 0, interruptions: 1 },
+    },
+    baseline: null,
+    failureReason: null,
+    sha: "abcdef1234567890",
+    urlMapRaw: null,
+  })
+  assert.match(body, /Did Not Finish/)
+  assert.match(body, /Google MFA\/TOTP blocked API key retrieval/)
+  assert.equal(body.includes("Eval Complete"), false, "must not read as success when score is null")
+  assert.equal(/\*\*[A-F][+-]? \d+\/100\*\*/.test(body), false, "must not show a grade/score header when score is null")
+})
+
+test("renderCommitStatus marks completed+null-score as failure with DNF explanation", () => {
+  const cs = renderCommitStatus({
+    status: "completed",
+    statusUrl: "https://x.dev/evals/api/v1/runs/abc",
+    report: { score: null, grade: null, keyFinding: "MFA blocked login.", url: "https://x.dev/evals/acme/reports/abc" },
+    failureReason: null,
+  })
+  assert.equal(cs.state, "failure")
+  assert.match(cs.description, /Did not finish/)
+  assert.match(cs.description, /MFA blocked login/)
+  assert.equal(cs.targetUrl, "https://x.dev/evals/acme/reports/abc")
+})
+
 test("renderComment includes failureReason for status=failed", () => {
   const sample = sampleRun()
   const reason = "Browser agent crashed on step 4 (sample reason)"

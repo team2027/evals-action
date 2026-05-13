@@ -241,6 +241,23 @@ function deriveDashboardUrl(report, statusUrl) {
   return statusUrl.replace(/\/+$/, "").replace(/\/api\/v1\/runs\/[^/]+$/, "")
 }
 
+// "completed" + null score means the agent didn't actually finish the task.
+// Surface the highest-signal explanation the report carries — keyFinding
+// matches the "KEY FINDING" line on the dashboard report page.
+function dnfMessage(report, failureReason) {
+  if (report && typeof report.keyFinding === "string" && report.keyFinding.trim()) {
+    return report.keyFinding.trim()
+  }
+  if (report && report.summary && typeof report.summary.whatDidnt === "string" && report.summary.whatDidnt.trim()) {
+    return report.summary.whatDidnt.trim()
+  }
+  if (report && typeof report.verdict === "string" && report.verdict.trim()) {
+    return report.verdict.trim().split(/\r?\n/)[0]
+  }
+  if (failureReason) return String(failureReason)
+  return "Task did not complete — no score recorded"
+}
+
 function renderScoreBlock(report, baseline) {
   if (!report || report.score == null) return null
   const bar = scoreBar(report.score)
@@ -360,8 +377,13 @@ function renderComment({ status, promptTitle, statusUrl, report, baseline, failu
   const hasScore = report && report.score != null && report.grade
   const heading = hasScore
     ? `### 2027 // ${title} — **${report.grade} ${report.score}/100**`
-    : `### 2027 // ${title} — Eval Complete`
+    : `### 2027 // ${title} — Did Not Finish`
   const lines = [heading]
+
+  if (!hasScore) {
+    const msg = singleLine(dnfMessage(report, failureReason))
+    if (msg) lines.push("", "```diff", `- ${msg}`, "```")
+  }
 
   const scoreBlock = renderScoreBlock(report, baseline)
   if (scoreBlock) lines.push("", scoreBlock)
@@ -387,6 +409,14 @@ function renderCommitStatus({ status, statusUrl, report, failureReason }) {
     return { state: "pending", description: "Running eval...", targetUrl: statusUrl }
   }
   if (status === "completed") {
+    const hasScore = report && report.score != null
+    if (!hasScore) {
+      return {
+        state: "failure",
+        description: `Did not finish — ${dnfMessage(report, failureReason)}`,
+        targetUrl: report?.url || statusUrl,
+      }
+    }
     if (report?.url) {
       return { state: "success", description: "Completed — see report", targetUrl: report.url }
     }
