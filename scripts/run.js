@@ -170,9 +170,21 @@ function scoreBar(score, width = 20) {
 
 // For time/cost/errors/interruptions: lower is better. The existing delta
 // helpers return strings prefixed with "+"/"-"; map that sign to an arrow.
+// Anything not clearly signed passes through without an arrow.
 function metricArrow(deltaStr) {
   if (!deltaStr) return ""
-  return deltaStr.startsWith("-") ? `▼ ${deltaStr}` : `▲ ${deltaStr}`
+  if (deltaStr.startsWith("-")) return `▼ ${deltaStr}`
+  if (deltaStr.startsWith("+")) return `▲ ${deltaStr}`
+  return deltaStr
+}
+
+// Server-supplied free-form strings (failureReason, keyFinding, verdict, etc.)
+// get rendered inside ```diff fences. If one of them contains a literal
+// triple-backtick run it would close the fence early and leak the rest into
+// the comment as raw markdown. Break any 3+ backtick run with zero-width
+// spaces — invisible to humans, neutralizes the fence parser.
+function sanitizeForFence(str) {
+  return String(str || "").replace(/`{3,}/g, (run) => run.split("").join("​"))
 }
 
 function formatDelta(delta) {
@@ -347,7 +359,7 @@ function renderComment({ status, promptTitle, statusUrl, runUrl, report, baselin
   if (status === "failed") {
     const lines = [`### 2027 // ${title} — Eval failed`]
     if (failureReason) {
-      lines.push("", "```diff", `- ${singleLine(failureReason)}`, "```")
+      lines.push("", "```diff", `- ${sanitizeForFence(singleLine(failureReason))}`, "```")
     }
     const foot = footer()
     if (foot) lines.push("", foot)
@@ -382,7 +394,7 @@ function renderComment({ status, promptTitle, statusUrl, runUrl, report, baselin
   const lines = [heading]
 
   if (!hasScore) {
-    const msg = singleLine(dnfMessage(report, failureReason))
+    const msg = sanitizeForFence(singleLine(dnfMessage(report, failureReason)))
     if (msg) lines.push("", "```diff", `- ${msg}`, "```")
   }
 

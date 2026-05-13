@@ -205,6 +205,47 @@ test("renderCommitStatus marks completed+null-score as failure with DNF explanat
   assert.equal(cs.targetUrl, "https://x.dev/evals/acme/reports/abc")
 })
 
+test("renderComment neutralizes triple-backtick runs in server-supplied strings so fences stay balanced", () => {
+  // Realistic risk: LLM-generated keyFinding / failureReason may quote a code
+  // snippet with ``` which would close the diff fence early.
+  const malicious = "Crashed on ```\nthrow new Error()\n``` block"
+  const fenceCount = (s) => (s.match(/^```/gm) || []).length
+
+  const failedBody = renderComment({
+    status: "failed",
+    promptTitle: "T",
+    statusUrl: "https://x/api/v1/runs/a",
+    report: null,
+    baseline: null,
+    failureReason: malicious,
+    sha: "abcdef1",
+    urlMapRaw: null,
+  })
+  assert.equal(
+    fenceCount(failedBody) % 2,
+    0,
+    `failed-body fence count must be even (was ${fenceCount(failedBody)}):\n${failedBody}`,
+  )
+  // Original ``` runs must not survive verbatim — they'd close the fence.
+  assert.equal(/```\s*\n?[^d]/.test(failedBody.replace(/^```diff$/m, "").replace(/^```$/m, "")), false)
+
+  const dnfBody = renderComment({
+    status: "completed",
+    promptTitle: "T",
+    statusUrl: "https://x/api/v1/runs/a",
+    report: { score: null, grade: null, keyFinding: malicious, url: "https://x/r" },
+    baseline: null,
+    failureReason: null,
+    sha: "abcdef1",
+    urlMapRaw: null,
+  })
+  assert.equal(
+    fenceCount(dnfBody) % 2,
+    0,
+    `dnf-body fence count must be even (was ${fenceCount(dnfBody)}):\n${dnfBody}`,
+  )
+})
+
 test("renderComment includes failureReason for status=failed", () => {
   const sample = sampleRun()
   const reason = "Browser agent crashed on step 4 (sample reason)"
