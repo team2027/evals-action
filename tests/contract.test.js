@@ -165,7 +165,7 @@ test("renderComment includes score+grade when the spec declares them and the sam
   assert.match(body, new RegExp(gradeEscaped), "grade must appear in completed comment")
 })
 
-test("renderComment communicates 'Did Not Finish' when status=completed but score is null", () => {
+test("renderComment communicates 'Did not finish' when status=completed but score is null", () => {
   const body = renderComment({
     status: "completed",
     promptTitle: "Install MCP",
@@ -182,9 +182,9 @@ test("renderComment communicates 'Did Not Finish' when status=completed but scor
     sha: "abcdef1234567890",
     urlMapRaw: null,
   })
-  assert.match(body, /Did Not Finish/)
+  assert.match(body, /Did not finish/)
   assert.match(body, /Google MFA\/TOTP blocked API key retrieval/)
-  assert.equal(body.includes("Eval Complete"), false, "must not read as success when score is null")
+  assert.equal(/Eval complete/i.test(body), false, "must not read as success when score is null")
   assert.equal(/\*\*[A-F][+-]? \d+\/100\*\*/.test(body), false, "must not show a grade/score header when score is null")
 })
 
@@ -205,7 +205,7 @@ test("renderComment includes failureReason for status=failed", () => {
   const sample = sampleRun()
   const reason = "Browser agent crashed on step 4 (sample reason)"
   const body = renderComment(renderArgsFromSample(sample, { status: "failed", failureReason: reason }))
-  assert.match(body, /Eval Failed/)
+  assert.match(body, /Eval failed/)
   assert.ok(body.includes(reason), "failureReason text must appear in body")
 })
 

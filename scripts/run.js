@@ -344,7 +344,7 @@ function renderComment({ status, promptTitle, statusUrl, report, baseline, failu
   }
 
   if (status === "failed") {
-    const lines = [`### 2027 // ${title} — Eval Failed`]
+    const lines = [`### 2027 // ${title} — Eval failed`]
     if (failureReason) {
       lines.push("", "```diff", `- ${singleLine(failureReason)}`, "```")
     }
@@ -377,7 +377,7 @@ function renderComment({ status, promptTitle, statusUrl, report, baseline, failu
   const hasScore = report && report.score != null && report.grade
   const heading = hasScore
     ? `### 2027 // ${title} — **${report.grade} ${report.score}/100**`
-    : `### 2027 // ${title} — Did Not Finish`
+    : `### 2027 // ${title} — Did not finish`
   const lines = [heading]
 
   if (!hasScore) {
@@ -396,7 +396,7 @@ function renderComment({ status, promptTitle, statusUrl, report, baseline, failu
 
   const tailParts = []
   if (sha7) tailParts.push(`Commit \`${sha7}\``)
-  if (report && report.url) tailParts.push(`[View Report →](${report.url})`)
+  if (report && report.url) tailParts.push(`[View report →](${report.url})`)
   const dashboardUrl = deriveDashboardUrl(report, statusUrl)
   if (dashboardUrl) tailParts.push(`[Dashboard](${dashboardUrl})`)
   if (tailParts.length) lines.push("", tailParts.join("  ·  "))
