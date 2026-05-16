@@ -571,9 +571,11 @@ async function run({ core, github, context }) {
       return
     }
   }
+  // An empty {} is treated as "not set" — both for the url-map check below
+  // and for body construction, so the action never ships a no-op `templateVars: {}`.
+  const hasTemplateVars = templateVars && Object.keys(templateVars).length > 0
 
   const urlMapEntries = Object.values(urlMap)
-  const hasTemplateVars = templateVars && Object.keys(templateVars).length > 0
   if (urlMapEntries.length === 0 && !hasTemplateVars) {
     core.setFailed("url-map must have at least one entry (or set template-vars for prompts that use template variables instead of a preview URL)")
     return
@@ -624,7 +626,7 @@ async function run({ core, github, context }) {
   core.info(`starting eval at ${startUrl}`)
   let started
   try {
-    const startBody = templateVars ? { urlMap, templateVars } : { urlMap }
+    const startBody = hasTemplateVars ? { urlMap, templateVars } : { urlMap }
     started = await postJsonWithRetry(startUrl, apiKey, startBody, { core })
   } catch (e) {
     core.setFailed(`failed to start eval: ${e.message}`)

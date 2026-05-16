@@ -122,6 +122,33 @@ test("POST /run body includes templateVars when input is provided", async (t) =>
   assert.deepEqual(body.templateVars, { cliInstall: "npm i -g https://pkg.pr.new/x" })
 })
 
+test("POST /run body omits templateVars when input is an empty object (validator and builder agree)", async (t) => {
+  clearEnv()
+  setEnv({
+    EVALS_API_KEY: "sk-test",
+    EVALS_PROMPT_ID: "p-1",
+    EVALS_URL_MAP: '{"acme.com":"https://preview.fly.dev"}',
+    EVALS_TEMPLATE_VARS: "{}",
+    EVALS_WAIT_TIMEOUT_MINUTES: "1",
+    EVALS_POLL_INTERVAL_SECONDS: "1",
+  })
+  const { captured, restore } = installFetch([
+    { match: "/prompts/p-1/run", body: { runId: "r-1", statusUrl: "https://x/api/v1/runs/r-1" } },
+    { match: "/runs/r-1", body: { runId: "r-1", status: "completed", prompt: { title: "T" }, report: { score: 80, grade: "B" } } },
+    { match: "/runs?promptId=", body: [] },
+  ])
+  t.after(restore)
+
+  const run = freshRun()
+  const core = makeCore()
+  await run({ core, github: makeGithub(), context: makeContext() })
+
+  const post = captured.find((c) => c.init && c.init.method === "POST")
+  const body = JSON.parse(post.init.body)
+  assert.deepEqual(body, { urlMap: { "acme.com": "https://preview.fly.dev" } })
+  assert.equal("templateVars" in body, false, "empty {} must not leak into the request body")
+})
+
 test("POST /run body omits templateVars when input is empty (back-compat)", async (t) => {
   clearEnv()
   setEnv({
@@ -241,6 +268,9 @@ test("template-vars rejects invalid JSON", async (t) => {
 })
 
 test("template-vars rejects non-object JSON (array / scalar)", async (t) => {
+  const { restore } = installFetch([])
+  t.after(restore)
+
   for (const raw of ['["a","b"]', '"a string"', "42"]) {
     clearEnv()
     setEnv({
@@ -251,8 +281,6 @@ test("template-vars rejects non-object JSON (array / scalar)", async (t) => {
       EVALS_WAIT_TIMEOUT_MINUTES: "1",
       EVALS_POLL_INTERVAL_SECONDS: "1",
     })
-    const { restore } = installFetch([])
-    t.after(restore)
 
     const run = freshRun()
     const core = makeCore()
