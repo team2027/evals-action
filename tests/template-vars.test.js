@@ -62,8 +62,11 @@ function makeContext() {
 }
 
 // Capture every fetch call, return scripted JSON responses by URL substring.
+// Returns { captured, restore } — call restore() in t.after to put the real
+// fetch back so a later test that needs it doesn't silently get the stub.
 function installFetch(scripted) {
   const captured = []
+  const original = global.fetch
   global.fetch = async (url, init) => {
     captured.push({ url, init })
     const handler = scripted.find((s) => url.includes(s.match))
@@ -76,7 +79,8 @@ function installFetch(scripted) {
       text: async () => JSON.stringify(body),
     }
   }
-  return captured
+  const restore = () => { global.fetch = original }
+  return { captured, restore }
 }
 
 function setEnv(env) {
@@ -89,7 +93,7 @@ function clearEnv() {
   }
 }
 
-test("POST /run body includes templateVars when input is provided", async () => {
+test("POST /run body includes templateVars when input is provided", async (t) => {
   clearEnv()
   setEnv({
     EVALS_API_KEY: "sk-test",
@@ -99,11 +103,12 @@ test("POST /run body includes templateVars when input is provided", async () => 
     EVALS_WAIT_TIMEOUT_MINUTES: "1",
     EVALS_POLL_INTERVAL_SECONDS: "1",
   })
-  const captured = installFetch([
+  const { captured, restore } = installFetch([
     { match: "/prompts/p-1/run", body: { runId: "r-1", statusUrl: "https://x/api/v1/runs/r-1" } },
     { match: "/runs/r-1", body: { runId: "r-1", status: "completed", prompt: { title: "T" }, report: { score: 80, grade: "B" } } },
     { match: "/runs?promptId=", body: [] },
   ])
+  t.after(restore)
 
   const run = freshRun()
   const core = makeCore()
@@ -117,7 +122,7 @@ test("POST /run body includes templateVars when input is provided", async () => 
   assert.deepEqual(body.templateVars, { cliInstall: "npm i -g https://pkg.pr.new/x" })
 })
 
-test("POST /run body omits templateVars when input is empty (back-compat)", async () => {
+test("POST /run body omits templateVars when input is empty (back-compat)", async (t) => {
   clearEnv()
   setEnv({
     EVALS_API_KEY: "sk-test",
@@ -126,11 +131,12 @@ test("POST /run body omits templateVars when input is empty (back-compat)", asyn
     EVALS_WAIT_TIMEOUT_MINUTES: "1",
     EVALS_POLL_INTERVAL_SECONDS: "1",
   })
-  const captured = installFetch([
+  const { captured, restore } = installFetch([
     { match: "/prompts/p-1/run", body: { runId: "r-1", statusUrl: "https://x/api/v1/runs/r-1" } },
     { match: "/runs/r-1", body: { runId: "r-1", status: "completed", prompt: { title: "T" }, report: { score: 80, grade: "B" } } },
     { match: "/runs?promptId=", body: [] },
   ])
+  t.after(restore)
 
   const run = freshRun()
   const core = makeCore()
@@ -142,7 +148,7 @@ test("POST /run body omits templateVars when input is empty (back-compat)", asyn
   assert.equal("templateVars" in body, false)
 })
 
-test("template-vars accepts empty url-map (CLI / non-URL evals)", async () => {
+test("template-vars accepts empty url-map (CLI / non-URL evals)", async (t) => {
   clearEnv()
   setEnv({
     EVALS_API_KEY: "sk-test",
@@ -152,11 +158,12 @@ test("template-vars accepts empty url-map (CLI / non-URL evals)", async () => {
     EVALS_WAIT_TIMEOUT_MINUTES: "1",
     EVALS_POLL_INTERVAL_SECONDS: "1",
   })
-  const captured = installFetch([
+  const { captured, restore } = installFetch([
     { match: "/prompts/p-1/run", body: { runId: "r-1", statusUrl: "https://x/api/v1/runs/r-1" } },
     { match: "/runs/r-1", body: { runId: "r-1", status: "completed", prompt: { title: "T" }, report: { score: 80, grade: "B" } } },
     { match: "/runs?promptId=", body: [] },
   ])
+  t.after(restore)
 
   const run = freshRun()
   const core = makeCore()
@@ -169,7 +176,7 @@ test("template-vars accepts empty url-map (CLI / non-URL evals)", async () => {
   assert.deepEqual(body.templateVars, { cliInstall: "npm i -g foo" })
 })
 
-test("empty url-map without template-vars still fails fast", async () => {
+test("empty url-map without template-vars still fails fast", async (t) => {
   clearEnv()
   setEnv({
     EVALS_API_KEY: "sk-test",
@@ -178,7 +185,8 @@ test("empty url-map without template-vars still fails fast", async () => {
     EVALS_WAIT_TIMEOUT_MINUTES: "1",
     EVALS_POLL_INTERVAL_SECONDS: "1",
   })
-  installFetch([])
+  const { restore } = installFetch([])
+  t.after(restore)
 
   const run = freshRun()
   const core = makeCore()
@@ -189,7 +197,29 @@ test("empty url-map without template-vars still fails fast", async () => {
   assert.match(core.calls.failed[0], /template-vars/)
 })
 
-test("template-vars rejects invalid JSON", async () => {
+test("empty url-map with empty template-vars object also fails fast (no silent {} pass-through)", async (t) => {
+  clearEnv()
+  setEnv({
+    EVALS_API_KEY: "sk-test",
+    EVALS_PROMPT_ID: "p-1",
+    EVALS_URL_MAP: "{}",
+    EVALS_TEMPLATE_VARS: "{}",
+    EVALS_WAIT_TIMEOUT_MINUTES: "1",
+    EVALS_POLL_INTERVAL_SECONDS: "1",
+  })
+  const { captured, restore } = installFetch([])
+  t.after(restore)
+
+  const run = freshRun()
+  const core = makeCore()
+  await run({ core, github: makeGithub(), context: makeContext() })
+
+  assert.equal(core.calls.failed.length, 1)
+  assert.match(core.calls.failed[0], /url-map must have at least one entry/)
+  assert.equal(captured.length, 0, "must not POST when both inputs are empty")
+})
+
+test("template-vars rejects invalid JSON", async (t) => {
   clearEnv()
   setEnv({
     EVALS_API_KEY: "sk-test",
@@ -199,7 +229,8 @@ test("template-vars rejects invalid JSON", async () => {
     EVALS_WAIT_TIMEOUT_MINUTES: "1",
     EVALS_POLL_INTERVAL_SECONDS: "1",
   })
-  installFetch([])
+  const { restore } = installFetch([])
+  t.after(restore)
 
   const run = freshRun()
   const core = makeCore()
@@ -209,7 +240,7 @@ test("template-vars rejects invalid JSON", async () => {
   assert.match(core.calls.failed[0], /template-vars must be valid JSON/)
 })
 
-test("template-vars rejects non-object JSON (array / scalar)", async () => {
+test("template-vars rejects non-object JSON (array / scalar)", async (t) => {
   for (const raw of ['["a","b"]', '"a string"', "42"]) {
     clearEnv()
     setEnv({
@@ -220,7 +251,8 @@ test("template-vars rejects non-object JSON (array / scalar)", async () => {
       EVALS_WAIT_TIMEOUT_MINUTES: "1",
       EVALS_POLL_INTERVAL_SECONDS: "1",
     })
-    installFetch([])
+    const { restore } = installFetch([])
+    t.after(restore)
 
     const run = freshRun()
     const core = makeCore()

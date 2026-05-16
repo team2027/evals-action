@@ -548,7 +548,7 @@ async function run({ core, github, context }) {
 
   let urlMap
   try {
-    urlMap = JSON.parse(urlMapRaw || "{}")
+    urlMap = JSON.parse(urlMapRaw)
   } catch (e) {
     core.setFailed(`url-map must be valid JSON: ${e.message}`)
     return
@@ -573,7 +573,8 @@ async function run({ core, github, context }) {
   }
 
   const urlMapEntries = Object.values(urlMap)
-  if (urlMapEntries.length === 0 && !templateVars) {
+  const hasTemplateVars = templateVars && Object.keys(templateVars).length > 0
+  if (urlMapEntries.length === 0 && !hasTemplateVars) {
     core.setFailed("url-map must have at least one entry (or set template-vars for prompts that use template variables instead of a preview URL)")
     return
   }
