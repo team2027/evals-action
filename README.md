@@ -140,6 +140,21 @@ jobs:
             { "acme.com": "${{ steps.deploy.outputs.preview-url }}" }
 ```
 
+#### Prompts with template variables (e.g. CLI / non-URL evals)
+
+If your prompt declares `templateVars` (e.g. a per-PR CLI build URL stamped
+into the task), pass them via `template-vars`. `url-map` becomes optional —
+omit it for evals that don't target a web preview.
+
+```yaml
+- uses: team2027/evals-action@v0.2.0
+  with:
+    api-key: ${{ secrets.EVALS_API_KEY }}
+    prompt-id: 12345678-1234-1234-1234-1234567890ab
+    template-vars: |
+      { "cliInstall": "npm i -g https://pkg.pr.new/org/repo/@scope/cli@${{ github.event.pull_request.head.sha }}" }
+```
+
 ## Inputs
 
 | Name | Required | Default | Description |
@@ -147,7 +162,8 @@ jobs:
 | `api-key` | yes | — | 2027 API key (store as repo secret) |
 | `api-base-url` | no | `https://2027.dev/evals` | Override for self-hosted evals deployments |
 | `prompt-id` | yes | — | Prompt UUID. List via `GET /api/v1/prompts`. |
-| `url-map` | yes | — | JSON object mapping production hostnames to preview URLs. Values must be full `http(s)` URLs (not bare hostnames). |
+| `url-map` | conditional | `{}` | JSON object mapping production hostnames to preview URLs. Values must be full `http(s)` URLs (not bare hostnames). Required unless `template-vars` is set (e.g. CLI / non-URL evals). |
+| `template-vars` | conditional | — | JSON object of values for the prompt's declared template variables. Required when the prompt declares non-empty `templateVars`; the server rejects the run otherwise with `400 Missing template vars`. |
 | `deployment-url` | no | first `url-map` value | Required when `url-map` has more than one entry |
 | `wait-timeout-minutes` | no | `20` | Poll for at most this many minutes before exiting |
 | `poll-interval-seconds` | no | `20` | Seconds between status polls (used as base for backoff) |

@@ -517,6 +517,7 @@ async function run({ core, github, context }) {
   const apiBase = (process.env.EVALS_API_BASE_URL || "https://2027.dev/evals").replace(/\/$/, "")
   const promptId = process.env.EVALS_PROMPT_ID || undefined
   const urlMapRaw = process.env.EVALS_URL_MAP || ""
+  const templateVarsRaw = process.env.EVALS_TEMPLATE_VARS || ""
   const explicitDeploymentUrl = process.env.EVALS_DEPLOYMENT_URL || ""
   // Defaults here must match action.yml — they're only used if the script is
   // invoked outside the composite step (rare, but worth keeping consistent).
@@ -547,7 +548,7 @@ async function run({ core, github, context }) {
 
   let urlMap
   try {
-    urlMap = JSON.parse(urlMapRaw)
+    urlMap = JSON.parse(urlMapRaw || "{}")
   } catch (e) {
     core.setFailed(`url-map must be valid JSON: ${e.message}`)
     return
@@ -557,9 +558,23 @@ async function run({ core, github, context }) {
     return
   }
 
+  let templateVars
+  if (templateVarsRaw.trim()) {
+    try {
+      templateVars = JSON.parse(templateVarsRaw)
+    } catch (e) {
+      core.setFailed(`template-vars must be valid JSON: ${e.message}`)
+      return
+    }
+    if (typeof templateVars !== "object" || templateVars === null || Array.isArray(templateVars)) {
+      core.setFailed("template-vars must be a JSON object")
+      return
+    }
+  }
+
   const urlMapEntries = Object.values(urlMap)
-  if (urlMapEntries.length === 0) {
-    core.setFailed("url-map must have at least one entry")
+  if (urlMapEntries.length === 0 && !templateVars) {
+    core.setFailed("url-map must have at least one entry (or set template-vars for prompts that use template variables instead of a preview URL)")
     return
   }
   // deployment-url is no longer sent to the server (it derives the deployment
@@ -608,7 +623,8 @@ async function run({ core, github, context }) {
   core.info(`starting eval at ${startUrl}`)
   let started
   try {
-    started = await postJsonWithRetry(startUrl, apiKey, { urlMap }, { core })
+    const startBody = templateVars ? { urlMap, templateVars } : { urlMap }
+    started = await postJsonWithRetry(startUrl, apiKey, startBody, { core })
   } catch (e) {
     core.setFailed(`failed to start eval: ${e.message}`)
     return

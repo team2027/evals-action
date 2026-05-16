@@ -14,8 +14,13 @@ inputs:
     description: Prompt UUID. List available IDs via GET /api/v1/prompts.
     required: true
   url-map:
-    description: 'JSON object mapping production hostnames to preview URLs (full http(s) URLs required), e.g. {"acme.com":"https://deploy-preview-1.netlify.app"}'
-    required: true
+    description: 'JSON object mapping production hostnames to preview URLs (full http(s) URLs required), e.g. {"acme.com":"https://deploy-preview-1.netlify.app"}. Optional when template-vars carries the prompt''s variables (e.g. CLI / non-URL evals); pass {} in that case.'
+    required: false
+    default: "{}"
+  template-vars:
+    description: 'JSON object of values for the prompt''s declared template variables, e.g. {"cliInstall":"npm i -g https://pkg.pr.new/org/repo/@scope/cli@abc1234"}. Required when the prompt declares non-empty templateVars; otherwise omit.'
+    required: false
+    default: ""
   deployment-url:
     description: Preview deployment URL. Required when url-map has more than one entry (validated at runtime).
     required: false
@@ -80,6 +85,7 @@ runs:
         EVALS_API_BASE_URL: ${{ inputs.api-base-url }}
         EVALS_PROMPT_ID: ${{ inputs.prompt-id }}
         EVALS_URL_MAP: ${{ inputs.url-map }}
+        EVALS_TEMPLATE_VARS: ${{ inputs.template-vars }}
         EVALS_DEPLOYMENT_URL: ${{ inputs.deployment-url }}
         EVALS_WAIT_TIMEOUT_MINUTES: ${{ inputs.wait-timeout-minutes }}
         EVALS_POLL_INTERVAL_SECONDS: ${{ inputs.poll-interval-seconds }}
