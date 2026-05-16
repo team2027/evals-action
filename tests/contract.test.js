@@ -103,6 +103,18 @@ test("RunResponse declares fields the action reads from POST /run", () => {
   }
 })
 
+test("RunRequest declares the wire fields the action sends (urlMap + templateArgs)", () => {
+  // Pins the wire-name the action uses for the template-vars input. If the
+  // server ever renames `templateArgs` (or drops it), this test fails RED at
+  // build time instead of producing silent `400 Missing template vars` in CI.
+  // See team2027/evals-action#6 for the original drift incident.
+  const RunRequest = spec.components?.schemas?.RunRequest
+  assert.ok(RunRequest, "spec is missing components.schemas.RunRequest")
+  for (const path of ["urlMap", "templateArgs"]) {
+    assert.ok(resolvePath(RunRequest, path), `RunRequest missing ${path}`)
+  }
+})
+
 function sampleRun() {
   return OpenAPISampler.sample(spec.components.schemas.Run, { skipReadOnly: false }, spec)
 }

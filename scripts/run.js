@@ -626,7 +626,13 @@ async function run({ core, github, context }) {
   core.info(`starting eval at ${startUrl}`)
   let started
   try {
-    const startBody = hasTemplateVars ? { urlMap, templateVars } : { urlMap }
+    // The user-facing input is named `template-vars` to match what users see
+    // in the prompt config (`templateVars: ["cliInstall"]` is the declaration).
+    // Over the wire the run endpoint takes the *args* that satisfy those vars,
+    // hence `templateArgs` here. Drift on this name lands as `400 Missing
+    // template vars` from the server (it strips unknown keys via zod, then the
+    // missing-vars check fires) — so the contract test pins the wire name.
+    const startBody = hasTemplateVars ? { urlMap, templateArgs: templateVars } : { urlMap }
     started = await postJsonWithRetry(startUrl, apiKey, startBody, { core })
   } catch (e) {
     core.setFailed(`failed to start eval: ${e.message}`)

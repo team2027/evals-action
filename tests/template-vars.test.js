@@ -93,7 +93,7 @@ function clearEnv() {
   }
 }
 
-test("POST /run body includes templateVars when input is provided", async (t) => {
+test("POST /run body sends template values under the server's wire name `templateArgs`", async (t) => {
   clearEnv()
   setEnv({
     EVALS_API_KEY: "sk-test",
@@ -119,10 +119,15 @@ test("POST /run body includes templateVars when input is provided", async (t) =>
   assert.ok(post, "no POST to /prompts/p-1/run captured")
   const body = JSON.parse(post.init.body)
   assert.deepEqual(body.urlMap, { "acme.com": "https://preview.fly.dev" })
-  assert.deepEqual(body.templateVars, { cliInstall: "npm i -g https://pkg.pr.new/x" })
+  assert.deepEqual(body.templateArgs, { cliInstall: "npm i -g https://pkg.pr.new/x" })
+  // Guard against accidentally re-introducing the legacy field name that the
+  // server's zod schema strips, which surfaced as `400 Missing template vars`
+  // (issue #6). If anyone renames the wire field back to `templateVars` this
+  // assertion catches it before it ships to a real prompt.
+  assert.equal("templateVars" in body, false, "must not send the legacy `templateVars` field name")
 })
 
-test("POST /run body omits templateVars when input is an empty object (validator and builder agree)", async (t) => {
+test("POST /run body omits templateArgs when input is an empty object (validator and builder agree)", async (t) => {
   clearEnv()
   setEnv({
     EVALS_API_KEY: "sk-test",
@@ -146,10 +151,11 @@ test("POST /run body omits templateVars when input is an empty object (validator
   const post = captured.find((c) => c.init && c.init.method === "POST")
   const body = JSON.parse(post.init.body)
   assert.deepEqual(body, { urlMap: { "acme.com": "https://preview.fly.dev" } })
-  assert.equal("templateVars" in body, false, "empty {} must not leak into the request body")
+  assert.equal("templateArgs" in body, false, "empty {} must not leak into the request body")
+  assert.equal("templateVars" in body, false)
 })
 
-test("POST /run body omits templateVars when input is empty (back-compat)", async (t) => {
+test("POST /run body omits templateArgs when input is empty (back-compat)", async (t) => {
   clearEnv()
   setEnv({
     EVALS_API_KEY: "sk-test",
@@ -172,7 +178,7 @@ test("POST /run body omits templateVars when input is empty (back-compat)", asyn
   const post = captured.find((c) => c.init && c.init.method === "POST")
   const body = JSON.parse(post.init.body)
   assert.deepEqual(body, { urlMap: { "acme.com": "https://preview.fly.dev" } })
-  assert.equal("templateVars" in body, false)
+  assert.equal("templateArgs" in body, false)
 })
 
 test("template-vars accepts empty url-map (CLI / non-URL evals)", async (t) => {
@@ -200,7 +206,7 @@ test("template-vars accepts empty url-map (CLI / non-URL evals)", async (t) => {
   const post = captured.find((c) => c.init && c.init.method === "POST")
   const body = JSON.parse(post.init.body)
   assert.deepEqual(body.urlMap, {})
-  assert.deepEqual(body.templateVars, { cliInstall: "npm i -g foo" })
+  assert.deepEqual(body.templateArgs, { cliInstall: "npm i -g foo" })
 })
 
 test("empty url-map without template-vars still fails fast", async (t) => {
