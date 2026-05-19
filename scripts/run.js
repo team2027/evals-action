@@ -368,12 +368,11 @@ function renderMetricsTable(current, baseline) {
 function renderComment({ status, promptTitle, statusUrl, runUrl, report, baseline, failureReason, sha, urlMapRaw, templateVarsRaw }) {
   const title = promptTitle || "(unknown)"
   const sha7 = sha ? String(sha).slice(0, 7) : ""
-  const statusLink = runUrl || statusUrl
 
   const footer = () => {
     const parts = []
     if (sha7) parts.push(`Commit \`${sha7}\``)
-    if (statusLink) parts.push(`[Status →](${statusLink})`)
+    if (runUrl) parts.push(`[Status →](${runUrl})`)
     return parts.length ? parts.join("  ·  ") : null
   }
 
@@ -452,10 +451,9 @@ function renderComment({ status, promptTitle, statusUrl, runUrl, report, baselin
   return lines.join("\n")
 }
 
-function renderCommitStatus({ status, statusUrl, runUrl, report, failureReason }) {
-  const statusLink = runUrl || statusUrl
+function renderCommitStatus({ status, runUrl, report, failureReason }) {
   if (status === "pending" || status === "running") {
-    return { state: "pending", description: "Running eval...", targetUrl: statusLink }
+    return { state: "pending", description: "Running eval...", targetUrl: runUrl }
   }
   if (status === "completed") {
     const hasScore = report && report.score != null
@@ -463,23 +461,23 @@ function renderCommitStatus({ status, statusUrl, runUrl, report, failureReason }
       return {
         state: "failure",
         description: `Did not finish — ${dnfMessage(report, failureReason)}`,
-        targetUrl: report?.url || statusLink,
+        targetUrl: report?.url || runUrl,
       }
     }
     if (report?.url) {
       return { state: "success", description: "Completed — see report", targetUrl: report.url }
     }
-    return { state: "success", description: "Completed — see status page", targetUrl: statusLink }
+    return { state: "success", description: "Completed — see status page", targetUrl: runUrl }
   }
   if (status === "failed") {
     // setCommitStatus handles singleLine + truncate; pass raw failureReason here.
     const description = failureReason || "Eval failed — see status page"
-    return { state: "error", description, targetUrl: statusLink }
+    return { state: "error", description, targetUrl: runUrl }
   }
   if (status === "superseded") {
-    return { state: "success", description: "Superseded by newer commit", targetUrl: statusLink }
+    return { state: "success", description: "Superseded by newer commit", targetUrl: runUrl }
   }
-  return { state: "pending", description: "Running eval...", targetUrl: statusLink }
+  return { state: "pending", description: "Running eval...", targetUrl: runUrl }
 }
 
 function extractPrFromContext(context) {
@@ -676,8 +674,17 @@ async function run({ core, github, context }) {
 
   const runId = started.runId
   const statusUrl = started.statusUrl
+  // Human-facing dashboard URL for this run — used as the link target in PR
+  // comments and commit statuses. Server guarantees it on the POST response
+  // (team2027/evals#205), so validate up front rather than falling back to
+  // statusUrl (a JSON endpoint that renders poorly on a PR).
+  const runUrl = started.runUrl
   if (!runId) {
     core.setFailed(`start response missing runId: ${JSON.stringify(started)}`)
+    return
+  }
+  if (!runUrl) {
+    core.setFailed(`start response missing runUrl: ${JSON.stringify(started)}`)
     return
   }
   core.setOutput("run-id", runId)
@@ -686,14 +693,10 @@ async function run({ core, github, context }) {
   const runApiUrl = `${apiBase}/api/v1/runs/${encodeURIComponent(runId)}`
   const marker = STICKY_MARKER(promptId)
   let promptTitle
-  // Human-facing dashboard URL for this run, returned by the API alongside
-  // statusUrl. Optional — falls back to statusUrl in renderers if absent.
-  let runUrl
 
   try {
     const initial = await getJson(runApiUrl, apiKey)
     promptTitle = initial.prompt && initial.prompt.title
-    runUrl = initial.runUrl
   } catch (e) {
     if (e instanceof HttpStatusError && [401, 403, 404].includes(e.status)) {
       core.setFailed(`fatal auth/lookup error fetching initial run state: ${e.message}`)
@@ -717,7 +720,7 @@ async function run({ core, github, context }) {
   }
   if (!skipStatus) {
     try {
-      const initialStatus = renderCommitStatus({ status: "pending", statusUrl, runUrl, report: null, failureReason: null })
+      const initialStatus = renderCommitStatus({ status: "pending", runUrl, report: null, failureReason: null })
       await setCommitStatus(github, owner, repo, sha, { ...initialStatus, context: ctxName })
     } catch (e) {
       core.warning(`failed to set initial commit status: ${e.message}`)
@@ -740,7 +743,6 @@ async function run({ core, github, context }) {
     try {
       current = await getJson(runApiUrl, apiKey)
       backoffSec = pollIntervalS // reset on success
-      runUrl = current.runUrl || runUrl
     } catch (e) {
       if (e instanceof HttpStatusError) {
         if ([401, 403, 404].includes(e.status)) {
@@ -777,7 +779,6 @@ async function run({ core, github, context }) {
           try {
             const retry = await getJson(runApiUrl, apiKey)
             last = retry
-            runUrl = retry.runUrl || runUrl
             if (retry.report || retry.failureReason) break
           } catch (e) {
             core.warning(`grace-period poll failed (ignoring): ${e.message}`)
@@ -818,7 +819,7 @@ async function run({ core, github, context }) {
       await upsertComment(github, owner, repo, prNumber, marker, body, core)
     }
     if (!skipStatus) {
-      const cs = renderCommitStatus({ status: finalStatus, statusUrl, runUrl, report, failureReason })
+      const cs = renderCommitStatus({ status: finalStatus, runUrl, report, failureReason })
       try {
         await setCommitStatus(github, owner, repo, sha, { ...cs, context: ctxName })
       } catch (e) {
@@ -845,7 +846,7 @@ async function run({ core, github, context }) {
       await setCommitStatus(github, owner, repo, sha, {
         state: timeoutState,
         description: timeoutDescription,
-        targetUrl: runUrl || statusUrl,
+        targetUrl: runUrl,
         context: ctxName,
       })
     } catch (e) {

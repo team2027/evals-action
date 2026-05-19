@@ -99,7 +99,10 @@ test("GET /api/v1/runs accepts promptId + reportStatus filters (used for baselin
 test("RunResponse declares fields the action reads from POST /run", () => {
   const RunResponse = spec.components?.schemas?.RunResponse
   assert.ok(RunResponse, "spec is missing components.schemas.RunResponse")
-  for (const path of ["runId", "statusUrl"]) {
+  // runUrl is required on POST so the initial pending commit status + PR
+  // comment can link to the human run page without a follow-up GET.
+  // See team2027/evals#205, team2027/evals-action#10.
+  for (const path of ["runId", "statusUrl", "runUrl"]) {
     assert.ok(resolvePath(RunResponse, path), `RunResponse missing ${path}`)
   }
 })
@@ -303,16 +306,15 @@ test("renderComment omits Vars line entirely when template-vars is absent (no em
   assert.equal(/^Vars:/m.test(body), false, "must not render 'Vars:' line when input is absent")
 })
 
-test("renderComment links to runUrl when present, falling back to statusUrl otherwise", () => {
+test("renderComment uses runUrl as the Status link (no statusUrl fallback)", () => {
+  // POST /run now guarantees runUrl, so the renderer links to the human run
+  // page from the very first comment — never the raw JSON statusUrl.
   const sample = sampleRun()
   const runUrl = "https://2027.dev/evals/acme/runs/abc-123"
   for (const status of ["pending", "running", "failed", "superseded"]) {
-    const withRun = renderComment(renderArgsFromSample(sample, { status, runUrl }))
-    assert.ok(withRun.includes(runUrl), `runUrl not used for status=${status}`)
-    assert.equal(withRun.includes(sample.statusUrl), false, `statusUrl should be hidden when runUrl is set (status=${status})`)
-
-    const noRun = renderComment(renderArgsFromSample(sample, { status, runUrl: undefined }))
-    assert.ok(noRun.includes(sample.statusUrl), `statusUrl fallback missing for status=${status}`)
+    const body = renderComment(renderArgsFromSample(sample, { status, runUrl }))
+    assert.ok(body.includes(runUrl), `runUrl not used for status=${status}`)
+    assert.equal(body.includes(sample.statusUrl), false, `statusUrl must not appear as Status link (status=${status})`)
   }
 })
 

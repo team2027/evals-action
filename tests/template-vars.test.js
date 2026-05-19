@@ -104,7 +104,7 @@ test("POST /run body sends template values under the server's wire name `templat
     EVALS_POLL_INTERVAL_SECONDS: "1",
   })
   const { captured, restore } = installFetch([
-    { match: "/prompts/p-1/run", body: { runId: "r-1", statusUrl: "https://x/api/v1/runs/r-1" } },
+    { match: "/prompts/p-1/run", body: { runId: "r-1", statusUrl: "https://x/api/v1/runs/r-1", runUrl: "https://x/acme/runs/r-1" } },
     { match: "/runs/r-1", body: { runId: "r-1", status: "completed", prompt: { title: "T" }, report: { score: 80, grade: "B" } } },
     { match: "/runs?promptId=", body: [] },
   ])
@@ -138,7 +138,7 @@ test("POST /run body omits templateArgs when input is an empty object (validator
     EVALS_POLL_INTERVAL_SECONDS: "1",
   })
   const { captured, restore } = installFetch([
-    { match: "/prompts/p-1/run", body: { runId: "r-1", statusUrl: "https://x/api/v1/runs/r-1" } },
+    { match: "/prompts/p-1/run", body: { runId: "r-1", statusUrl: "https://x/api/v1/runs/r-1", runUrl: "https://x/acme/runs/r-1" } },
     { match: "/runs/r-1", body: { runId: "r-1", status: "completed", prompt: { title: "T" }, report: { score: 80, grade: "B" } } },
     { match: "/runs?promptId=", body: [] },
   ])
@@ -165,7 +165,7 @@ test("POST /run body omits templateArgs when input is empty (back-compat)", asyn
     EVALS_POLL_INTERVAL_SECONDS: "1",
   })
   const { captured, restore } = installFetch([
-    { match: "/prompts/p-1/run", body: { runId: "r-1", statusUrl: "https://x/api/v1/runs/r-1" } },
+    { match: "/prompts/p-1/run", body: { runId: "r-1", statusUrl: "https://x/api/v1/runs/r-1", runUrl: "https://x/acme/runs/r-1" } },
     { match: "/runs/r-1", body: { runId: "r-1", status: "completed", prompt: { title: "T" }, report: { score: 80, grade: "B" } } },
     { match: "/runs?promptId=", body: [] },
   ])
@@ -192,7 +192,7 @@ test("template-vars accepts empty url-map (CLI / non-URL evals)", async (t) => {
     EVALS_POLL_INTERVAL_SECONDS: "1",
   })
   const { captured, restore } = installFetch([
-    { match: "/prompts/p-1/run", body: { runId: "r-1", statusUrl: "https://x/api/v1/runs/r-1" } },
+    { match: "/prompts/p-1/run", body: { runId: "r-1", statusUrl: "https://x/api/v1/runs/r-1", runUrl: "https://x/acme/runs/r-1" } },
     { match: "/runs/r-1", body: { runId: "r-1", status: "completed", prompt: { title: "T" }, report: { score: 80, grade: "B" } } },
     { match: "/runs?promptId=", body: [] },
   ])
@@ -271,6 +271,31 @@ test("template-vars rejects invalid JSON", async (t) => {
 
   assert.equal(core.calls.failed.length, 1)
   assert.match(core.calls.failed[0], /template-vars must be valid JSON/)
+})
+
+test("fails fast when POST /run response is missing runUrl (server contract violation)", async (t) => {
+  // runUrl is required on the POST response (team2027/evals#205). If a stale
+  // server forgets it, we'd otherwise post a status with targetUrl=undefined —
+  // catch that at the boundary instead.
+  clearEnv()
+  setEnv({
+    EVALS_API_KEY: "sk-test",
+    EVALS_PROMPT_ID: "p-1",
+    EVALS_URL_MAP: '{"acme.com":"https://preview.fly.dev"}',
+    EVALS_WAIT_TIMEOUT_MINUTES: "1",
+    EVALS_POLL_INTERVAL_SECONDS: "1",
+  })
+  const { restore } = installFetch([
+    { match: "/prompts/p-1/run", body: { runId: "r-1", statusUrl: "https://x/api/v1/runs/r-1" } },
+  ])
+  t.after(restore)
+
+  const run = freshRun()
+  const core = makeCore()
+  await run({ core, github: makeGithub(), context: makeContext() })
+
+  assert.equal(core.calls.failed.length, 1)
+  assert.match(core.calls.failed[0], /start response missing runUrl/)
 })
 
 test("template-vars rejects non-object JSON (array / scalar)", async (t) => {
