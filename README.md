@@ -155,6 +155,46 @@ omit it for evals that don't target a web preview.
       { "cliInstall": "npm i -g https://pkg.pr.new/org/repo/@scope/cli@${{ github.sha }}" }
 ```
 
+## Workflow setup
+
+### Required permissions
+
+The action needs exactly these scopes on the workflow's `GITHUB_TOKEN`:
+
+```yaml
+permissions:
+  contents: read          # checkout
+  pull-requests: write    # sticky PR comment + look up the PR for a commit
+  statuses: write         # commit status check
+```
+
+You do **not** need `issues: write`. PR comments are served by GitHub's
+issue-comments REST endpoint, but token-scope-wise `pull-requests: write`
+already covers them — granting `issues: write` only widens the surface area
+without enabling anything the action uses.
+
+If you set `skip-comment: true` you can drop `pull-requests: write` (the PR
+lookup still works on `contents: read`). If you set `skip-status: true` you
+can drop `statuses: write`.
+
+### Concurrency — supersede in-flight runs
+
+For PR-triggered workflows, set `cancel-in-progress: true` so a new push
+cancels the stale workflow:
+
+```yaml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+```
+
+This is safe with our backend's supersession logic. If the cancelled workflow
+had already started an eval run, the next workflow's call to our API will
+mark the older run `superseded` automatically — the action handles that as a
+terminal state (commit status `success`, "superseded by newer commit" in the
+sticky comment). If the cancelled workflow died before creating a run, there's
+simply nothing to supersede.
+
 ## Inputs
 
 | Name | Required | Default | Description |
