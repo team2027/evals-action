@@ -14,6 +14,7 @@ const {
   renderCommitStatus,
   formatDelta,
   renderTestedLine,
+  renderTemplateVarsLine,
   deriveDashboardUrl,
   renderMetricsTable,
   formatSecondsDelta,
@@ -100,6 +101,18 @@ test("RunResponse declares fields the action reads from POST /run", () => {
   assert.ok(RunResponse, "spec is missing components.schemas.RunResponse")
   for (const path of ["runId", "statusUrl"]) {
     assert.ok(resolvePath(RunResponse, path), `RunResponse missing ${path}`)
+  }
+})
+
+test("RunRequest declares the wire fields the action sends (urlMap + templateArgs)", () => {
+  // Pins the wire-name the action uses for the template-vars input. If the
+  // server ever renames `templateArgs` (or drops it), this test fails RED at
+  // build time instead of producing silent `400 Missing template vars` in CI.
+  // See team2027/evals-action#6 for the original drift incident.
+  const RunRequest = spec.components?.schemas?.RunRequest
+  assert.ok(RunRequest, "spec is missing components.schemas.RunRequest")
+  for (const path of ["urlMap", "templateArgs"]) {
+    assert.ok(resolvePath(RunRequest, path), `RunRequest missing ${path}`)
   }
 })
 
@@ -257,6 +270,39 @@ test("renderComment includes failureReason for status=failed", () => {
   assert.ok(body.includes(reason), "failureReason text must appear in body")
 })
 
+test("renderComment surfaces url-map and template-vars context in the Running… body (known before the run finishes)", () => {
+  const body = renderComment({
+    status: "running",
+    promptTitle: "Getting Started: Staging CLI",
+    statusUrl: "https://2027.dev/evals/api/v1/runs/r",
+    runUrl: "https://2027.dev/evals/acme/runs/r",
+    report: null,
+    baseline: null,
+    failureReason: null,
+    sha: "ca3dedf",
+    urlMapRaw: '{"www.sanity.io":"https://www.sanity.io"}',
+    templateVarsRaw: '{"cliInstall":"npm i -g https://pkg.pr.new/team2027/sanity-cli/@sanity/cli@1ca9807"}',
+  })
+  assert.match(body, /Running…/)
+  assert.match(body, /Tested: www\.sanity\.io → www\.sanity\.io/)
+  assert.match(body, /Vars: `cliInstall`: npm i -g https:\/\/pkg\.pr\.new\//)
+})
+
+test("renderComment omits Vars line entirely when template-vars is absent (no empty 'Vars:')", () => {
+  const body = renderComment({
+    status: "running",
+    promptTitle: "T",
+    statusUrl: "https://x/api/v1/runs/r",
+    report: null,
+    baseline: null,
+    failureReason: null,
+    sha: "abcdef1",
+    urlMapRaw: '{"acme.com":"https://x.fly.dev"}',
+    templateVarsRaw: null,
+  })
+  assert.equal(/^Vars:/m.test(body), false, "must not render 'Vars:' line when input is absent")
+})
+
 test("renderComment links to runUrl when present, falling back to statusUrl otherwise", () => {
   const sample = sampleRun()
   const runUrl = "https://2027.dev/evals/acme/runs/abc-123"
@@ -303,6 +349,28 @@ test("renderTestedLine survives malformed input", () => {
   assert.equal(
     renderTestedLine('{"acme.com":"https://x.fly.dev"}'),
     "Tested: acme.com → x.fly.dev",
+  )
+})
+
+test("renderTemplateVarsLine renders var=value pairs with truncation, survives malformed input", () => {
+  assert.equal(renderTemplateVarsLine(""), null)
+  assert.equal(renderTemplateVarsLine("not json"), null)
+  assert.equal(renderTemplateVarsLine("[1,2,3]"), null)
+  assert.equal(renderTemplateVarsLine("{}"), null)
+  assert.equal(renderTemplateVarsLine('{"cliInstall": ""}'), null)
+  assert.equal(
+    renderTemplateVarsLine('{"cliInstall":"npm i -g foo"}'),
+    "Vars: `cliInstall`: npm i -g foo",
+  )
+  // Long values get truncated so the line stays readable on a PR page.
+  const long = "x".repeat(200)
+  const out = renderTemplateVarsLine(JSON.stringify({ cliInstall: long }))
+  assert.match(out, /^Vars: `cliInstall`: x+\.\.\.$/)
+  assert.ok(out.length < 200, `expected truncation, got length=${out.length}`)
+  // Multiple vars join with comma.
+  assert.equal(
+    renderTemplateVarsLine('{"a":"1","b":"2"}'),
+    "Vars: `a`: 1, `b`: 2",
   )
 })
 

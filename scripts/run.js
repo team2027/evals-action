@@ -220,6 +220,27 @@ function renderTestedLine(urlMapRaw) {
   return `Tested: ${parts.join(", ")}`
 }
 
+// Surfaced both in the running and completed comments so users can confirm
+// the eval picked up the right per-PR build before waiting for results.
+// Values can be long (e.g. `npm i -g https://pkg.pr.new/.../@scope/cli@sha`),
+// so each one is truncated to keep the line readable on PR pages.
+const TEMPLATE_VAR_VALUE_MAX = 80
+function renderTemplateVarsLine(templateVarsRaw) {
+  if (!templateVarsRaw) return null
+  let parsed
+  try {
+    parsed = JSON.parse(templateVarsRaw)
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
+  const parts = Object.entries(parsed)
+    .filter(([, value]) => typeof value === "string" && value.length > 0)
+    .map(([name, value]) => `\`${name}\`: ${truncate(value, TEMPLATE_VAR_VALUE_MAX)}`)
+  if (parts.length === 0) return null
+  return `Vars: ${parts.join(", ")}`
+}
+
 function formatSecondsDelta(seconds) {
   if (!Number.isFinite(seconds) || seconds === 0) return null
   const abs = Math.abs(seconds)
@@ -344,7 +365,7 @@ function renderMetricsTable(current, baseline) {
 
 // Client-side renderers — server returns minimal status now, action renders
 // the comment + commit status from { status, prompt.title, report?, baseline?, failureReason }.
-function renderComment({ status, promptTitle, statusUrl, runUrl, report, baseline, failureReason, sha, urlMapRaw }) {
+function renderComment({ status, promptTitle, statusUrl, runUrl, report, baseline, failureReason, sha, urlMapRaw, templateVarsRaw }) {
   const title = promptTitle || "(unknown)"
   const sha7 = sha ? String(sha).slice(0, 7) : ""
   const statusLink = runUrl || statusUrl
@@ -374,6 +395,15 @@ function renderComment({ status, promptTitle, statusUrl, runUrl, report, baselin
       "  ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒",
       "```",
     ]
+    // Context that's known before the run finishes — surface it so users can
+    // confirm the eval picked up the right preview / per-PR build right away.
+    const tested = renderTestedLine(urlMapRaw)
+    const vars = renderTemplateVarsLine(templateVarsRaw)
+    if (tested || vars) {
+      lines.push("")
+      if (tested) lines.push(tested)
+      if (vars) lines.push(vars)
+    }
     const foot = footer()
     if (foot) lines.push("", foot)
     return lines.join("\n")
@@ -405,7 +435,12 @@ function renderComment({ status, promptTitle, statusUrl, runUrl, report, baselin
   if (table) lines.push("", table)
 
   const tested = renderTestedLine(urlMapRaw)
-  if (tested) lines.push("", tested)
+  const vars = renderTemplateVarsLine(templateVarsRaw)
+  if (tested || vars) {
+    lines.push("")
+    if (tested) lines.push(tested)
+    if (vars) lines.push(vars)
+  }
 
   const tailParts = []
   if (sha7) tailParts.push(`Commit \`${sha7}\``)
@@ -517,6 +552,7 @@ async function run({ core, github, context }) {
   const apiBase = (process.env.EVALS_API_BASE_URL || "https://2027.dev/evals").replace(/\/$/, "")
   const promptId = process.env.EVALS_PROMPT_ID || undefined
   const urlMapRaw = process.env.EVALS_URL_MAP || ""
+  const templateVarsRaw = process.env.EVALS_TEMPLATE_VARS || ""
   const explicitDeploymentUrl = process.env.EVALS_DEPLOYMENT_URL || ""
   // Defaults here must match action.yml — they're only used if the script is
   // invoked outside the composite step (rare, but worth keeping consistent).
@@ -557,9 +593,26 @@ async function run({ core, github, context }) {
     return
   }
 
+  let templateVars
+  if (templateVarsRaw.trim()) {
+    try {
+      templateVars = JSON.parse(templateVarsRaw)
+    } catch (e) {
+      core.setFailed(`template-vars must be valid JSON: ${e.message}`)
+      return
+    }
+    if (typeof templateVars !== "object" || templateVars === null || Array.isArray(templateVars)) {
+      core.setFailed("template-vars must be a JSON object")
+      return
+    }
+  }
+  // An empty {} is treated as "not set" — both for the url-map check below
+  // and for body construction, so the action never ships a no-op `templateVars: {}`.
+  const hasTemplateVars = templateVars && Object.keys(templateVars).length > 0
+
   const urlMapEntries = Object.values(urlMap)
-  if (urlMapEntries.length === 0) {
-    core.setFailed("url-map must have at least one entry")
+  if (urlMapEntries.length === 0 && !hasTemplateVars) {
+    core.setFailed("url-map must have at least one entry (or set template-vars for prompts that use template variables instead of a preview URL)")
     return
   }
   // deployment-url is no longer sent to the server (it derives the deployment
@@ -608,7 +661,14 @@ async function run({ core, github, context }) {
   core.info(`starting eval at ${startUrl}`)
   let started
   try {
-    started = await postJsonWithRetry(startUrl, apiKey, { urlMap }, { core })
+    // The user-facing input is named `template-vars` to match what users see
+    // in the prompt config (`templateVars: ["cliInstall"]` is the declaration).
+    // Over the wire the run endpoint takes the *args* that satisfy those vars,
+    // hence `templateArgs` here. Drift on this name lands as `400 Missing
+    // template vars` from the server (it strips unknown keys via zod, then the
+    // missing-vars check fires) — so the contract test pins the wire name.
+    const startBody = hasTemplateVars ? { urlMap, templateArgs: templateVars } : { urlMap }
+    started = await postJsonWithRetry(startUrl, apiKey, startBody, { core })
   } catch (e) {
     core.setFailed(`failed to start eval: ${e.message}`)
     return
@@ -651,7 +711,7 @@ async function run({ core, github, context }) {
       repo,
       prNumber,
       marker,
-      renderComment({ status: "pending", promptTitle, statusUrl, runUrl, report: null, baseline: null, failureReason: null, sha, urlMapRaw }),
+      renderComment({ status: "pending", promptTitle, statusUrl, runUrl, report: null, baseline: null, failureReason: null, sha, urlMapRaw, templateVarsRaw }),
       core,
     )
   }
@@ -754,7 +814,7 @@ async function run({ core, github, context }) {
 
   if (finalStatus === "completed" || finalStatus === "failed" || finalStatus === "superseded") {
     if (!skipComment) {
-      const body = renderComment({ status: finalStatus, promptTitle, statusUrl, runUrl, report, baseline, failureReason, sha, urlMapRaw })
+      const body = renderComment({ status: finalStatus, promptTitle, statusUrl, runUrl, report, baseline, failureReason, sha, urlMapRaw, templateVarsRaw })
       await upsertComment(github, owner, repo, prNumber, marker, body, core)
     }
     if (!skipStatus) {
@@ -773,7 +833,7 @@ async function run({ core, github, context }) {
 
   // timeout — still running. Keep PR check unblocked unless timeout-fails=true.
   if (!skipComment) {
-    const timeoutBody = renderComment({ status: "running", promptTitle, statusUrl, runUrl, report: null, baseline: null, failureReason: null, sha, urlMapRaw })
+    const timeoutBody = renderComment({ status: "running", promptTitle, statusUrl, runUrl, report: null, baseline: null, failureReason: null, sha, urlMapRaw, templateVarsRaw })
     await upsertComment(github, owner, repo, prNumber, marker, timeoutBody, core)
   }
   const timeoutState = timeoutFails ? "failure" : "success"
@@ -802,6 +862,7 @@ module.exports.renderComment = renderComment
 module.exports.renderCommitStatus = renderCommitStatus
 module.exports.formatDelta = formatDelta
 module.exports.renderTestedLine = renderTestedLine
+module.exports.renderTemplateVarsLine = renderTemplateVarsLine
 module.exports.deriveDashboardUrl = deriveDashboardUrl
 module.exports.renderMetricsTable = renderMetricsTable
 module.exports.formatSecondsDelta = formatSecondsDelta
