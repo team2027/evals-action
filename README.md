@@ -59,11 +59,12 @@ curl -H "Authorization: Bearer $EVALS_API_KEY" \
 
 Pick the recipe that matches your preview platform:
 
-| Platform | Recipe |
-|----------|--------|
+| Platform / use case | Recipe |
+|---------------------|--------|
 | Vercel, Mintlify, anything using GitHub's [Deployments API](https://docs.github.com/en/rest/deployments) | `on: deployment_status` (below) |
 | Netlify | `on: status` with context filter (below) |
 | Anything else, or you want full control | Run after your own deploy step (below) |
+| Manual re-run from a PR (label or comment mention) | `on: pull_request: [labeled]` + `issue_comment` (below) |
 
 #### Vercel / Mintlify (`on: deployment_status`)
 
@@ -151,6 +152,54 @@ jobs:
           url-map: |
             { "acme.com": "${{ steps.deploy.outputs.preview-url }}" }
 ```
+
+#### On-demand triggers (label / comment mention)
+
+Re-run an eval on an existing PR without pushing a commit — useful for
+testing prompt changes, retrying after a flake, or letting a reviewer fire
+the eval manually. Two complementary triggers:
+
+```yaml
+name: 2027 eval (on-demand)
+on:
+  pull_request:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+jobs:
+  eval:
+    if: >-
+      (github.event_name == 'pull_request' &&
+        github.event.label.name == 'trigger: preview') ||
+      (github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        contains(github.event.comment.body, '@your-org-handle'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: team2027/evals-action@v0.7.0
+        with:
+          api-key: ${{ secrets.EVALS_API_KEY }}
+          prompt-id: 12345678-1234-1234-1234-1234567890ab
+          url-map: |
+            { "acme.com": "https://your-preview-url" }
+```
+
+Two gotchas worth knowing:
+
+1. **Where the workflow is loaded from differs by event.** `issue_comment`
+   always uses the workflow file on your default branch — so this YAML must
+   land on `main` before comment mentions can trigger it. `pull_request:
+   labeled` uses the workflow on the **PR's head branch**, which means an
+   already-open PR won't pick up new triggers until you merge `main` into
+   its branch.
+2. **Always gate with an `if:`.** Without one, every label / every PR
+   comment would fire a paid eval. The filter above is the minimum: a
+   specific label name plus a mention substring.
 
 #### Prompts with template variables (e.g. CLI / non-URL evals)
 
