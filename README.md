@@ -189,7 +189,7 @@ jobs:
             { "acme.com": "https://your-preview-url" }
 ```
 
-Two gotchas worth knowing:
+Three gotchas worth knowing:
 
 1. **Where the workflow is loaded from differs by event.** `issue_comment`
    always uses the workflow file on your default branch — so this YAML must
@@ -200,6 +200,16 @@ Two gotchas worth knowing:
 2. **Always gate with an `if:`.** Without one, every label / every PR
    comment would fire a paid eval. The filter above is the minimum: a
    specific label name plus a mention substring.
+3. **Don't key `concurrency.group` on the PR number when you're listening
+   to `issue_comment`.** GitHub evaluates `concurrency` *before* `if:`, so
+   an unrelated bot comment on the same PR would cancel an in-flight eval
+   even though its body fails the `@2027dev` filter. Key off the comment
+   id (unique per comment) so each comment gets its own group:
+   ```yaml
+   concurrency:
+     group: ${{ github.workflow }}-${{ github.event.comment.id || github.head_ref || github.ref }}
+     cancel-in-progress: true
+   ```
 
 #### Prompts with template variables (e.g. CLI / non-URL evals)
 
