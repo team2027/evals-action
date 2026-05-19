@@ -173,7 +173,7 @@ jobs:
         github.event.label.name == 'trigger: preview') ||
       (github.event_name == 'issue_comment' &&
         github.event.issue.pull_request &&
-        contains(github.event.comment.body, '@your-org-handle'))
+        contains(github.event.comment.body, '@2027dev'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
