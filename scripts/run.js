@@ -501,6 +501,24 @@ function extractPrFromContext(context) {
       headRepoFullName: undefined,
     }
   }
+  // issue_comment fires on both issue and PR comments. payload.issue.pull_request
+  // is present (an object with the PR API URL) only when the comment is on a PR.
+  // The number we need is payload.issue.number — branch/sha aren't in the
+  // payload, so we fall through to lookupPrByNumber below.
+  if (
+    context.payload &&
+    context.payload.issue &&
+    context.payload.issue.pull_request &&
+    context.payload.issue.number
+  ) {
+    return {
+      number: context.payload.issue.number,
+      title: context.payload.issue.title,
+      branch: undefined,
+      sha: undefined,
+      headRepoFullName: undefined,
+    }
+  }
   return { number: undefined, title: undefined, branch: undefined, sha: context.sha, headRepoFullName: undefined }
 }
 
@@ -539,6 +557,24 @@ async function lookupPrBySha(github, owner, repo, sha) {
       branch: open.head && open.head.ref,
       sha: open.head && open.head.sha,
       headRepoFullName: open.head && open.head.repo && open.head.repo.full_name,
+    }
+  } catch (e) {
+    return null
+  }
+}
+
+// issue_comment events carry the PR number but no head sha/branch, so we have
+// to round-trip to the API to resolve them. `pull-requests: write` already
+// covers this read (pull-requests:read is a subset).
+async function lookupPrByNumber(github, owner, repo, number) {
+  try {
+    const { data } = await github.rest.pulls.get({ owner, repo, pull_number: number })
+    return {
+      number: data.number,
+      title: data.title,
+      branch: data.head && data.head.ref,
+      sha: data.head && data.head.sha,
+      headRepoFullName: data.head && data.head.repo && data.head.repo.full_name,
     }
   } catch (e) {
     return null
@@ -627,12 +663,17 @@ async function run({ core, github, context }) {
   if (!prInfo.number && prInfo.sha) {
     const found = await lookupPrBySha(github, owner, repo, prInfo.sha)
     if (found) prInfo = found
+  } else if (prInfo.number && !prInfo.sha) {
+    // issue_comment path: we have the PR number from the payload but need to
+    // fetch head sha/branch/headRepo to start the eval and detect fork PRs.
+    const found = await lookupPrByNumber(github, owner, repo, prInfo.number)
+    if (found) prInfo = found
   }
   const prNumber = prInfo.number
   const sha = prInfo.sha
   if (!prNumber) {
     core.setFailed(
-      "could not derive pull request number from event context (try a pull_request or deployment_status trigger)",
+      "could not derive pull request number from event context (try a pull_request, deployment_status, or issue_comment trigger)",
     )
     return
   }
