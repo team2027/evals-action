@@ -78,6 +78,10 @@ jobs:
   eval:
     if: github.event.deployment_status.state == 'success'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read        # for actions/checkout
+      pull-requests: write  # sticky PR comment
+      statuses: write       # commit status check
     steps:
       - uses: actions/checkout@v6
       - uses: team2027/evals-action@v0.2.0
@@ -102,6 +106,10 @@ jobs:
       github.event.state == 'success' &&
       contains(github.event.context, 'netlify/deploy-preview')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read        # for actions/checkout
+      pull-requests: write  # sticky PR comment
+      statuses: write       # commit status check
     steps:
       - uses: actions/checkout@v6
       - uses: team2027/evals-action@v0.2.0
@@ -124,6 +132,10 @@ on:
 jobs:
   deploy-and-eval:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read        # for actions/checkout
+      pull-requests: write  # sticky PR comment
+      statuses: write       # commit status check
     steps:
       - uses: actions/checkout@v6
       - id: deploy
