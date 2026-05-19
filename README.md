@@ -188,6 +188,16 @@ concurrency:
   cancel-in-progress: true
 ```
 
+> **Caveat for `deployment_status` triggers.** `github.head_ref` is empty on
+> deployment events and `github.ref` falls back to the deployment SHA, which
+> would put every commit in its own group (no supersession). Key on the
+> deployment's branch ref instead:
+> ```yaml
+> concurrency:
+>   group: ${{ github.workflow }}-${{ github.event.deployment.ref }}
+>   cancel-in-progress: true
+> ```
+
 This is safe with our backend's supersession logic. If the cancelled workflow
 had already started an eval run, the next workflow's call to our API will
 mark the older run `superseded` automatically — the action handles that as a
