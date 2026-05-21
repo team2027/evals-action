@@ -9,7 +9,7 @@ returned on `GET /api/v1/runs/:id` and whether a baseline run exists.
 2. Status line — bold `grade (score/100)` when present, else `Eval complete`
 3. Score delta vs baseline (only when both `score` and `baseline.score` are present)
 4. Metrics line — `Time · Cost · Errors · Interruptions`, with deltas in parens when baseline metrics exist
-5. `Tested:` line — host → preview-host mapping from `url-map`
+5. Mapping blockquote — one line per template-var (`> {{name}} => \`value\``) followed by one line per url-map entry (`> domain => \`previewHost\``). Omitted entirely when both maps are empty.
 6. `Commit:` short SHA
 7. Link row — `[View report →] · [Dashboard]`
 
@@ -28,7 +28,7 @@ The full layout. Everything optional rendered.
 
 Time: 2m 14s (+14s) · Cost: $0.12 (-$0.03) · Errors: 1 (+1) · Interruptions: 0
 
-Tested: acme.com → preview-pr-42.fly.dev
+> acme.com => `preview-pr-42.fly.dev`
 
 Commit: `a1b2c3d`
 
@@ -57,7 +57,7 @@ render so the metrics line stays informative.
 
 Time: 2m 14s · Cost: $0.12 · Errors: 1 · Interruptions: 0
 
-Tested: acme.com → preview-pr-42.fly.dev
+> acme.com => `preview-pr-42.fly.dev`
 
 Commit: `a1b2c3d`
 
@@ -79,7 +79,7 @@ metrics line is omitted entirely.
 
 +5 pts vs baseline
 
-Tested: acme.com → preview-pr-42.fly.dev
+> acme.com => `preview-pr-42.fly.dev`
 
 Commit: `a1b2c3d`
 
@@ -99,7 +99,7 @@ all the report-link plumbing still renders.
 
 ✅ Eval complete
 
-Tested: acme.com → preview-pr-42.fly.dev
+> acme.com => `preview-pr-42.fly.dev`
 
 Commit: `a1b2c3d`
 
@@ -108,10 +108,30 @@ Commit: `a1b2c3d`
 
 ---
 
+## Template-vars prompt — no `url-map`, just per-PR template args
+
+CLI / non-URL evals pass `template-vars` instead of a `url-map`. The
+blockquote then carries only the template-var lines.
+
+```markdown
+## 2027 AX Eval — Install the Sanity CLI
+
+✅ **A- (91/100)**
+
+> {{cliInstall}} => `npm i -g https://pkg.pr.new/team2027/sanity-cli/@sanity/cli@1ca9807`
+
+Commit: `a1b2c3d`
+
+[View report →](https://2027.dev/evals/sanity/reports/xyz) · [Dashboard](https://2027.dev/evals/sanity)
+```
+
+---
+
 ## Cross-cutting rules
 
 - Dashboard URL is derived by trimming `/reports/<slug>` (and any trailing slash) off `report.url`.
-- `Tested:` only renders inside `completed`. Other branches show the API status page.
+- The mapping blockquote renders in both the `running` and `completed` comments. Template-var lines appear first, then url-map lines, all inside a single blockquote.
 - Same-as-baseline (zero score delta) collapses the delta line to "Same as baseline".
 - Negative deltas use `-N pts vs baseline`.
-- Empty `url-map` entries are filtered out before rendering.
+- Empty `url-map` entries are filtered out before rendering. If both maps are empty / null / unparseable, the blockquote is omitted entirely.
+- Template-var values longer than 80 characters are truncated with an ellipsis so the line stays readable on a PR page.
