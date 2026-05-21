@@ -365,7 +365,7 @@ function renderMetricsTable(current, baseline) {
 
 // Client-side renderers — server returns minimal status now, action renders
 // the comment + commit status from { status, prompt.title, report?, baseline?, failureReason }.
-function renderComment({ status, promptTitle, statusUrl, runUrl, report, baseline, failureReason, sha, urlMapRaw, templateVarsRaw }) {
+function renderComment({ status, promptTitle, promptText, promptEndGoal, statusUrl, runUrl, report, baseline, failureReason, sha, urlMapRaw, templateVarsRaw }) {
   const title = promptTitle || "(unknown)"
   const sha7 = sha ? String(sha).slice(0, 7) : ""
 
@@ -432,6 +432,11 @@ function renderComment({ status, promptTitle, statusUrl, runUrl, report, baselin
 
   const table = renderMetricsTable(report && report.metrics, baseline && baseline.metrics)
   if (table) lines.push("", table)
+
+  if (promptText && promptText.trim()) {
+    lines.push("")
+    lines.push("<details><summary>prompt</summary>", "", promptText.trim(), "", "</details>")
+  }
 
   const varLines = renderTemplateVarsBlockquoteLines(templateVarsRaw)
   const mapLines = renderUrlMapBlockquoteLines(urlMapRaw)
@@ -833,6 +838,8 @@ async function run({ core, github, context }) {
   const finalStatus = (last && last.status) || "pending"
   const report = (last && last.report) || null
   const failureReason = (last && last.failureReason) || null
+  const promptText = (last && last.prompt && last.prompt.text) || null
+  const promptEndGoal = (last && last.prompt && last.prompt.endGoal) || null
 
   // Baseline is meaningful only when we have a fresh score to diff against.
   // Skip the extra round-trip on failed/superseded/timeout paths.
@@ -856,7 +863,7 @@ async function run({ core, github, context }) {
 
   if (finalStatus === "completed" || finalStatus === "failed" || finalStatus === "superseded") {
     if (!skipComment) {
-      const body = renderComment({ status: finalStatus, promptTitle, statusUrl, runUrl, report, baseline, failureReason, sha, urlMapRaw, templateVarsRaw })
+      const body = renderComment({ status: finalStatus, promptTitle, promptText, promptEndGoal, statusUrl, runUrl, report, baseline, failureReason, sha, urlMapRaw, templateVarsRaw })
       await upsertComment(github, owner, repo, prNumber, marker, body, core)
     }
     if (!skipStatus) {

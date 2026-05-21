@@ -9,9 +9,10 @@ returned on `GET /api/v1/runs/:id` and whether a baseline run exists.
 2. Status line — bold `grade (score/100)` when present, else `Eval complete`
 3. Score delta vs baseline (only when both `score` and `baseline.score` are present)
 4. Metrics line — `Time · Cost · Errors · Interruptions`, with deltas in parens when baseline metrics exist
-5. Mapping blockquote — one line per template-var (`> {{name}} → \`value\``) followed by one line per url-map entry (`> domain → \`previewHost\``). Omitted entirely when both maps are empty.
-6. `Commit:` short SHA
-7. Link row — `[View report →] · [Dashboard]`
+5. Prompt body — default-closed `<details><summary>prompt</summary>` block carrying `prompt.text` verbatim. Omitted when the API doesn't return a prompt body.
+6. Mapping blockquote — one line per template-var (`> {{name}} → \`value\``) followed by one line per url-map entry (`> domain → \`previewHost\``). Omitted entirely when both maps are empty.
+7. `Commit:` short SHA
+8. Link row — `[View report →] · [Dashboard]`
 
 ---
 
@@ -27,6 +28,13 @@ The full layout. Everything optional rendered.
 +5 pts vs baseline
 
 Time: 2m 14s (+14s) · Cost: $0.12 (-$0.03) · Errors: 1 (+1) · Interruptions: 0
+
+<details><summary>prompt</summary>
+
+Sign up for an account at acme.com, create a new project named "demo", and
+copy the generated API key from the project settings page.
+
+</details>
 
 > acme.com → `preview-pr-42.fly.dev`
 
