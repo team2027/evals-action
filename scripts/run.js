@@ -196,16 +196,21 @@ function formatDelta(delta) {
   return "Same as baseline"
 }
 
-function renderTestedLine(urlMapRaw) {
-  if (!urlMapRaw) return null
+// Renders the url-map as blockquote lines (one mapping per line). Used in
+// both the running and completed comments so users can confirm the eval
+// picked up the right preview / per-PR build before waiting for results.
+// Returns [] when the map is empty / null / unparseable so the caller can
+// concatenate with template-var lines into a single blockquote.
+function renderUrlMapBlockquoteLines(urlMapRaw) {
+  if (!urlMapRaw) return []
   let parsed
   try {
     parsed = JSON.parse(urlMapRaw)
   } catch {
-    return null
+    return []
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
-  const parts = Object.entries(parsed)
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return []
+  return Object.entries(parsed)
     .filter(([, value]) => typeof value === "string" && value.length > 0)
     .map(([host, value]) => {
       let previewHost
@@ -214,31 +219,26 @@ function renderTestedLine(urlMapRaw) {
       } catch {
         previewHost = value
       }
-      return `${host} → ${previewHost}`
+      return `> ${host} => \`${previewHost}\``
     })
-  if (parts.length === 0) return null
-  return `Tested: ${parts.join(", ")}`
 }
 
-// Surfaced both in the running and completed comments so users can confirm
-// the eval picked up the right per-PR build before waiting for results.
+// Renders template-var args as blockquote lines (one mapping per line).
 // Values can be long (e.g. `npm i -g https://pkg.pr.new/.../@scope/cli@sha`),
 // so each one is truncated to keep the line readable on PR pages.
 const TEMPLATE_VAR_VALUE_MAX = 80
-function renderTemplateVarsLine(templateVarsRaw) {
-  if (!templateVarsRaw) return null
+function renderTemplateVarsBlockquoteLines(templateVarsRaw) {
+  if (!templateVarsRaw) return []
   let parsed
   try {
     parsed = JSON.parse(templateVarsRaw)
   } catch {
-    return null
+    return []
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
-  const parts = Object.entries(parsed)
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return []
+  return Object.entries(parsed)
     .filter(([, value]) => typeof value === "string" && value.length > 0)
-    .map(([name, value]) => `\`${name}\`: ${truncate(value, TEMPLATE_VAR_VALUE_MAX)}`)
-  if (parts.length === 0) return null
-  return `Vars: ${parts.join(", ")}`
+    .map(([name, value]) => `> {{${name}}} => \`${truncate(value, TEMPLATE_VAR_VALUE_MAX)}\``)
 }
 
 function formatSecondsDelta(seconds) {
@@ -396,12 +396,12 @@ function renderComment({ status, promptTitle, statusUrl, runUrl, report, baselin
     ]
     // Context that's known before the run finishes — surface it so users can
     // confirm the eval picked up the right preview / per-PR build right away.
-    const tested = renderTestedLine(urlMapRaw)
-    const vars = renderTemplateVarsLine(templateVarsRaw)
-    if (tested || vars) {
+    const varLines = renderTemplateVarsBlockquoteLines(templateVarsRaw)
+    const mapLines = renderUrlMapBlockquoteLines(urlMapRaw)
+    const blockquote = [...varLines, ...mapLines]
+    if (blockquote.length > 0) {
       lines.push("")
-      if (tested) lines.push(tested)
-      if (vars) lines.push(vars)
+      lines.push(blockquote.join("\n"))
     }
     const foot = footer()
     if (foot) lines.push("", foot)
@@ -433,12 +433,12 @@ function renderComment({ status, promptTitle, statusUrl, runUrl, report, baselin
   const table = renderMetricsTable(report && report.metrics, baseline && baseline.metrics)
   if (table) lines.push("", table)
 
-  const tested = renderTestedLine(urlMapRaw)
-  const vars = renderTemplateVarsLine(templateVarsRaw)
-  if (tested || vars) {
+  const varLines = renderTemplateVarsBlockquoteLines(templateVarsRaw)
+  const mapLines = renderUrlMapBlockquoteLines(urlMapRaw)
+  const blockquote = [...varLines, ...mapLines]
+  if (blockquote.length > 0) {
     lines.push("")
-    if (tested) lines.push(tested)
-    if (vars) lines.push(vars)
+    lines.push(blockquote.join("\n"))
   }
 
   const tailParts = []
@@ -903,8 +903,8 @@ module.exports = run
 module.exports.renderComment = renderComment
 module.exports.renderCommitStatus = renderCommitStatus
 module.exports.formatDelta = formatDelta
-module.exports.renderTestedLine = renderTestedLine
-module.exports.renderTemplateVarsLine = renderTemplateVarsLine
+module.exports.renderUrlMapBlockquoteLines = renderUrlMapBlockquoteLines
+module.exports.renderTemplateVarsBlockquoteLines = renderTemplateVarsBlockquoteLines
 module.exports.deriveDashboardUrl = deriveDashboardUrl
 module.exports.renderMetricsTable = renderMetricsTable
 module.exports.formatSecondsDelta = formatSecondsDelta
