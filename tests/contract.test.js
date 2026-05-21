@@ -127,6 +127,8 @@ function renderArgsFromSample(sample, overrides = {}) {
   return {
     status: sample.status,
     promptTitle: sample.prompt?.title,
+    promptText: sample.prompt?.text,
+    promptEndGoal: sample.prompt?.endGoal,
     statusUrl: sample.statusUrl,
     runUrl: sample.runUrl,
     report: sample.report,
@@ -263,6 +265,82 @@ test("renderComment neutralizes triple-backtick runs in server-supplied strings 
     `dnf-body fence count must be even (was ${fenceCount(dnfBody)}):\n${dnfBody}`,
   )
   assert.equal(stripFences(dnfBody).includes("```"), false, "raw ``` must be neutralized in DNF body")
+})
+
+test("renderComment renders prompt.text in a default-closed <details> block on completed", () => {
+  const promptText = "Sign up for an account, create a project, and grab the API key."
+  const body = renderComment({
+    status: "completed",
+    promptTitle: "Sign up and create a project",
+    promptText,
+    statusUrl: "https://x.dev/evals/api/v1/runs/abc",
+    runUrl: "https://x.dev/evals/acme/runs/abc",
+    report: {
+      score: 87,
+      grade: "B+",
+      url: "https://x.dev/evals/acme/reports/abc",
+      metrics: { time: "2m 14s", cost: "$0.12", errors: 0, interruptions: 0 },
+    },
+    baseline: null,
+    failureReason: null,
+    sha: "abcdef1234567890",
+    urlMapRaw: '{"acme.com":"https://preview-pr-1.fly.dev"}',
+  })
+  assert.match(body, /<details><summary>prompt<\/summary>/)
+  assert.ok(body.includes(promptText), "prompt.text body must appear verbatim inside the <details> block")
+  // <details> must come AFTER the metrics table and BEFORE the url-map blockquote.
+  const detailsIdx = body.indexOf("<details><summary>prompt</summary>")
+  const tableIdx = body.indexOf("| Time |")
+  const blockquoteIdx = body.indexOf("> acme.com → ")
+  assert.ok(tableIdx >= 0 && detailsIdx > tableIdx, "<details> must appear after the metrics table")
+  assert.ok(blockquoteIdx >= 0 && detailsIdx < blockquoteIdx, "<details> must appear before the url-map blockquote")
+})
+
+test("renderComment omits the <details> block when prompt.text is missing or empty", () => {
+  const baseArgs = {
+    status: "completed",
+    promptTitle: "T",
+    statusUrl: "https://x.dev/evals/api/v1/runs/abc",
+    runUrl: "https://x.dev/evals/acme/runs/abc",
+    report: { score: 87, grade: "B+", url: "https://x.dev/evals/acme/reports/abc" },
+    baseline: null,
+    failureReason: null,
+    sha: "abcdef1",
+    urlMapRaw: null,
+  }
+  for (const promptText of [undefined, null, "", "   \n  "]) {
+    const body = renderComment({ ...baseArgs, promptText })
+    assert.equal(
+      body.includes("<details><summary>prompt</summary>"),
+      false,
+      `<details> block must be absent when promptText=${JSON.stringify(promptText)}`,
+    )
+  }
+})
+
+test("renderComment does NOT render prompt.text in the running comment", () => {
+  const body = renderComment({
+    status: "running",
+    promptTitle: "T",
+    promptText: "Some prompt body that should not appear during polling.",
+    statusUrl: "https://x.dev/evals/api/v1/runs/abc",
+    runUrl: "https://x.dev/evals/acme/runs/abc",
+    report: null,
+    baseline: null,
+    failureReason: null,
+    sha: "abcdef1",
+    urlMapRaw: '{"acme.com":"https://preview-pr-1.fly.dev"}',
+  })
+  assert.equal(
+    body.includes("<details><summary>prompt</summary>"),
+    false,
+    "running comment must not include the <details> prompt block",
+  )
+  assert.equal(
+    body.includes("Some prompt body that should not appear during polling."),
+    false,
+    "running comment must not leak prompt.text into the body",
+  )
 })
 
 test("renderComment includes failureReason for status=failed", () => {
