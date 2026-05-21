@@ -219,7 +219,7 @@ function renderUrlMapBlockquoteLines(urlMapRaw) {
       } catch {
         previewHost = value
       }
-      return `> ${host} => \`${previewHost}\``
+      return `> ${host} → \`${previewHost}\``
     })
 }
 
@@ -238,7 +238,7 @@ function renderTemplateVarsBlockquoteLines(templateVarsRaw) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return []
   return Object.entries(parsed)
     .filter(([, value]) => typeof value === "string" && value.length > 0)
-    .map(([name, value]) => `> {{${name}}} => \`${truncate(value, TEMPLATE_VAR_VALUE_MAX)}\``)
+    .map(([name, value]) => `> {{${name}}} → \`${truncate(value, TEMPLATE_VAR_VALUE_MAX)}\``)
 }
 
 function formatSecondsDelta(seconds) {

@@ -288,8 +288,8 @@ test("renderComment surfaces url-map and template-vars context in the Running…
   })
   assert.match(body, /Running…/)
   // Template vars come first in the blockquote, then the url-map line.
-  const varIdx = body.indexOf("> {{cliInstall}} => `npm i -g https://pkg.pr.new/")
-  const mapIdx = body.indexOf("> www.sanity.io => `www.sanity.io`")
+  const varIdx = body.indexOf("> {{cliInstall}} → `npm i -g https://pkg.pr.new/")
+  const mapIdx = body.indexOf("> www.sanity.io → `www.sanity.io`")
   assert.ok(varIdx >= 0, `template-var blockquote line missing:\n${body}`)
   assert.ok(mapIdx >= 0, `url-map blockquote line missing:\n${body}`)
   assert.ok(varIdx < mapIdx, "template-var line must precede url-map line in the blockquote")
@@ -310,7 +310,7 @@ test("renderComment omits the blockquote entirely when template-vars is absent a
   // No template-var line.
   assert.equal(/^> \{\{/m.test(body), false, "must not render a template-var blockquote line when input is absent")
   // url-map line still present.
-  assert.match(body, /^> acme\.com => `x\.fly\.dev`$/m)
+  assert.match(body, /^> acme\.com → `x\.fly\.dev`$/m)
 })
 
 test("renderComment omits the blockquote entirely when both url-map and template-vars are absent", () => {
@@ -372,16 +372,16 @@ test("renderUrlMapBlockquoteLines survives malformed input", () => {
   assert.deepEqual(renderUrlMapBlockquoteLines('{"acme.com": ""}'), []) // empty values filtered
   assert.deepEqual(
     renderUrlMapBlockquoteLines('{"acme.com":"https://x.fly.dev"}'),
-    ["> acme.com => `x.fly.dev`"],
+    ["> acme.com → `x.fly.dev`"],
   )
   // Non-URL value falls back to the raw value.
   assert.deepEqual(
     renderUrlMapBlockquoteLines('{"skills.browserbase.com":"09d960d--team2027--browserbase-skills.2027.ax"}'),
-    ["> skills.browserbase.com => `09d960d--team2027--browserbase-skills.2027.ax`"],
+    ["> skills.browserbase.com → `09d960d--team2027--browserbase-skills.2027.ax`"],
   )
 })
 
-test("renderTemplateVarsBlockquoteLines renders {{var}} => `value` lines with truncation, survives malformed input", () => {
+test("renderTemplateVarsBlockquoteLines renders {{var}} → `value` lines with truncation, survives malformed input", () => {
   assert.deepEqual(renderTemplateVarsBlockquoteLines(""), [])
   assert.deepEqual(renderTemplateVarsBlockquoteLines("not json"), [])
   assert.deepEqual(renderTemplateVarsBlockquoteLines("[1,2,3]"), [])
@@ -389,18 +389,18 @@ test("renderTemplateVarsBlockquoteLines renders {{var}} => `value` lines with tr
   assert.deepEqual(renderTemplateVarsBlockquoteLines('{"cliInstall": ""}'), [])
   assert.deepEqual(
     renderTemplateVarsBlockquoteLines('{"cliInstall":"npm i -g foo"}'),
-    ["> {{cliInstall}} => `npm i -g foo`"],
+    ["> {{cliInstall}} → `npm i -g foo`"],
   )
   // Long values get truncated so the line stays readable on a PR page.
   const long = "x".repeat(200)
   const out = renderTemplateVarsBlockquoteLines(JSON.stringify({ cliInstall: long }))
   assert.equal(out.length, 1)
-  assert.match(out[0], /^> \{\{cliInstall\}\} => `x+\.\.\.`$/)
+  assert.match(out[0], /^> \{\{cliInstall\}\} → `x+\.\.\.`$/)
   assert.ok(out[0].length < 200, `expected truncation, got length=${out[0].length}`)
   // Multiple vars produce multiple lines, in declaration order.
   assert.deepEqual(
     renderTemplateVarsBlockquoteLines('{"a":"1","b":"2"}'),
-    ["> {{a}} => `1`", "> {{b}} => `2`"],
+    ["> {{a}} → `1`", "> {{b}} → `2`"],
   )
 })
 

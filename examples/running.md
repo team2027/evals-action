@@ -8,8 +8,8 @@ in-place via the sticky-comment marker as the action polls.
 
 🔄 Running eval
 
-> {{cliInstall}} => `npm i -g https://pkg.pr.new/team2027/sanity-cli/@sanity/cli@1ca9807`
-> acme.com => `preview-pr-42.fly.dev`
+> {{cliInstall}} → `npm i -g https://pkg.pr.new/team2027/sanity-cli/@sanity/cli@1ca9807`
+> acme.com → `preview-pr-42.fly.dev`
 
 Commit: `a1b2c3d`
 

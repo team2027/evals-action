@@ -9,7 +9,7 @@ returned on `GET /api/v1/runs/:id` and whether a baseline run exists.
 2. Status line — bold `grade (score/100)` when present, else `Eval complete`
 3. Score delta vs baseline (only when both `score` and `baseline.score` are present)
 4. Metrics line — `Time · Cost · Errors · Interruptions`, with deltas in parens when baseline metrics exist
-5. Mapping blockquote — one line per template-var (`> {{name}} => \`value\``) followed by one line per url-map entry (`> domain => \`previewHost\``). Omitted entirely when both maps are empty.
+5. Mapping blockquote — one line per template-var (`> {{name}} → \`value\``) followed by one line per url-map entry (`> domain → \`previewHost\``). Omitted entirely when both maps are empty.
 6. `Commit:` short SHA
 7. Link row — `[View report →] · [Dashboard]`
 
@@ -28,7 +28,7 @@ The full layout. Everything optional rendered.
 
 Time: 2m 14s (+14s) · Cost: $0.12 (-$0.03) · Errors: 1 (+1) · Interruptions: 0
 
-> acme.com => `preview-pr-42.fly.dev`
+> acme.com → `preview-pr-42.fly.dev`
 
 Commit: `a1b2c3d`
 
@@ -57,7 +57,7 @@ render so the metrics line stays informative.
 
 Time: 2m 14s · Cost: $0.12 · Errors: 1 · Interruptions: 0
 
-> acme.com => `preview-pr-42.fly.dev`
+> acme.com → `preview-pr-42.fly.dev`
 
 Commit: `a1b2c3d`
 
@@ -79,7 +79,7 @@ metrics line is omitted entirely.
 
 +5 pts vs baseline
 
-> acme.com => `preview-pr-42.fly.dev`
+> acme.com → `preview-pr-42.fly.dev`
 
 Commit: `a1b2c3d`
 
@@ -99,7 +99,7 @@ all the report-link plumbing still renders.
 
 ✅ Eval complete
 
-> acme.com => `preview-pr-42.fly.dev`
+> acme.com → `preview-pr-42.fly.dev`
 
 Commit: `a1b2c3d`
 
@@ -118,7 +118,7 @@ blockquote then carries only the template-var lines.
 
 ✅ **A- (91/100)**
 
-> {{cliInstall}} => `npm i -g https://pkg.pr.new/team2027/sanity-cli/@sanity/cli@1ca9807`
+> {{cliInstall}} → `npm i -g https://pkg.pr.new/team2027/sanity-cli/@sanity/cli@1ca9807`
 
 Commit: `a1b2c3d`
 
