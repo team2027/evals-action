@@ -702,7 +702,6 @@ async function run({ core, github, context }) {
   }
 
   const startUrl = `${apiBase}/api/v1/prompts/${encodeURIComponent(promptId)}/run`
-  core.info(`starting eval at ${startUrl}`)
   let started
   try {
     // The user-facing input is named `template-vars` to match what users see
@@ -733,6 +732,7 @@ async function run({ core, github, context }) {
     core.setFailed(`start response missing runUrl: ${JSON.stringify(started)}`)
     return
   }
+  core.info(`starting eval at ${runUrl}`)
   core.setOutput("run-id", runId)
   core.setOutput("status-url", statusUrl)
 
