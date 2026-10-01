@@ -1,0 +1,19 @@
+tests/contract.test.js
+  s_8c92088905a80f::t_1dffef7e98fc47 219-226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "461eeae85b0607112dc1f9461a99778876b80659",
+  "prompts": {},
+  "sessions": {
+    "s_8c92088905a80f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2ce395d2-b9a2-4072-8e8c-edb554ed8baf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aleks Bykhun <theisease@gmail.com>"
+    }
+  }
+}
