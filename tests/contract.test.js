@@ -216,6 +216,14 @@ test("fetchBaseline pages past non-succeeded runs to find a prior succeeded run 
     const baseline = await fetchBaseline("https://x.dev/evals", "k", "p-1", "current", { warning() {} })
     assert.deepEqual(baseline, { runId: "prior", metrics: { errors: 2 } })
     assert.equal(urls.length, 2, "must stop paging once a baseline is found")
+    urls.forEach((u, page) => {
+      const parsed = new URL(u)
+      assert.equal(parsed.origin + parsed.pathname, "https://x.dev/evals/api/v1/runs")
+      assert.equal(parsed.searchParams.get("promptId"), "p-1")
+      assert.equal(parsed.searchParams.get("reportStatus"), "published")
+      assert.equal(parsed.searchParams.get("limit"), String(pageSize))
+      assert.equal(parsed.searchParams.get("offset"), String(page * pageSize))
+    })
   } finally {
     globalThis.fetch = realFetch
   }
