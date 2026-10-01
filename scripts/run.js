@@ -162,12 +162,6 @@ async function setCommitStatus(github, owner, repo, sha, params) {
   })
 }
 
-function scoreBar(score, width = 20) {
-  const s = Math.max(0, Math.min(100, Number(score) || 0))
-  const filled = Math.round((s / 100) * width)
-  return "█".repeat(filled) + "░".repeat(Math.max(0, width - filled))
-}
-
 // For time/cost/errors/interruptions: lower is better. The existing delta
 // helpers return strings prefixed with "+"/"-"; map that sign to an arrow.
 // Anything not clearly signed passes through without an arrow.
@@ -185,15 +179,6 @@ function metricArrow(deltaStr) {
 // spaces — invisible to humans, neutralizes the fence parser.
 function sanitizeForFence(str) {
   return String(str || "").replace(/`{3,}/g, (run) => run.split("").join("​"))
-}
-
-function formatDelta(delta) {
-  const rounded = Math.round(delta * 10) / 10
-  const abs = Math.abs(rounded)
-  const display = Number.isInteger(abs) ? String(abs) : abs.toFixed(1)
-  if (rounded > 0) return `+${display} pts vs baseline`
-  if (rounded < 0) return `-${display} pts vs baseline`
-  return "Same as baseline"
 }
 
 // Renders the url-map as blockquote lines (one mapping per line). Used in
@@ -274,7 +259,13 @@ function deriveDashboardUrl(report, statusUrl) {
   return statusUrl.replace(/\/+$/, "").replace(/\/api\/v1\/runs\/[^/]+$/, "")
 }
 
-// "completed" + null score means the agent didn't actually finish the task.
+// A run succeeded only when its report says so. Every other outcome
+// (goal_not_met, no_creds, excluded, scoring_failed) or a missing report
+// means the agent didn't deliver what the prompt asked for.
+function isSucceeded(report) {
+  return Boolean(report) && report.outcome === "succeeded"
+}
+
 // Surface the highest-signal explanation the report carries — keyFinding
 // matches the "KEY FINDING" line on the dashboard report page.
 function dnfMessage(report, failureReason) {
@@ -284,37 +275,15 @@ function dnfMessage(report, failureReason) {
   if (report && report.summary && typeof report.summary.whatDidnt === "string" && report.summary.whatDidnt.trim()) {
     return report.summary.whatDidnt.trim()
   }
+  if (report && typeof report.nullNotice === "string" && report.nullNotice.trim()) {
+    return report.nullNotice.trim()
+  }
   if (report && typeof report.verdict === "string" && report.verdict.trim()) {
     return report.verdict.trim().split(/\r?\n/)[0]
   }
   if (failureReason) return String(failureReason)
-  return "Task did not complete — no score recorded"
-}
-
-function renderScoreBlock(report, baseline) {
-  if (!report || report.score == null) return null
-  const bar = scoreBar(report.score)
-  const hasBaseline = baseline && typeof baseline.score === "number"
-  if (!hasBaseline) {
-    return ["```", `  ${bar}`, "```"].join("\n")
-  }
-  const delta = report.score - baseline.score
-  const rounded = Math.round(delta * 10) / 10
-  const abs = Math.abs(rounded)
-  const display = Number.isInteger(abs) ? String(abs) : abs.toFixed(1)
-  let prefix
-  let annotation
-  if (rounded > 0) {
-    prefix = "+"
-    annotation = `▲ +${display} pts vs baseline`
-  } else if (rounded < 0) {
-    prefix = "-"
-    annotation = `▼ -${display} pts vs baseline`
-  } else {
-    prefix = " "
-    annotation = "Same as baseline"
-  }
-  return ["```diff", `${prefix} ${bar}   ${annotation}`, "```"].join("\n")
+  if (report && report.outcome) return `Task did not complete — outcome: ${report.outcome}`
+  return "Task did not complete — no report outcome recorded"
 }
 
 // Markdown table of the metrics the run reports, with ▼/▲ deltas where a
@@ -416,19 +385,16 @@ function renderComment({ status, promptTitle, promptText, promptEndGoal, statusU
   }
 
   // status === "completed"
-  const hasScore = report && report.score != null && report.grade
-  const heading = hasScore
-    ? `### 2027 // ${title} — **${report.grade} ${report.score}/100**`
+  const succeeded = isSucceeded(report)
+  const heading = succeeded
+    ? `### 2027 // ${title} — **Succeeded**`
     : `### 2027 // ${title} — Did not finish`
   const lines = [heading]
 
-  if (!hasScore) {
+  if (!succeeded) {
     const msg = sanitizeForFence(singleLine(dnfMessage(report, failureReason)))
     if (msg) lines.push("", "```diff", `- ${msg}`, "```")
   }
-
-  const scoreBlock = renderScoreBlock(report, baseline)
-  if (scoreBlock) lines.push("", scoreBlock)
 
   const table = renderMetricsTable(report && report.metrics, baseline && baseline.metrics)
   if (table) lines.push("", table)
@@ -461,8 +427,7 @@ function renderCommitStatus({ status, runUrl, report, failureReason }) {
     return { state: "pending", description: "Running eval...", targetUrl: runUrl }
   }
   if (status === "completed") {
-    const hasScore = report && report.score != null
-    if (!hasScore) {
+    if (!isSucceeded(report)) {
       return {
         state: "failure",
         description: `Did not finish — ${dnfMessage(report, failureReason)}`,
@@ -537,14 +502,10 @@ async function fetchBaseline(apiBase, apiKey, promptId, currentRunId, core) {
     const list = await getJson(url, apiKey)
     if (!Array.isArray(list)) return null
     const prior = list.find(
-      (r) => r && r.runId !== currentRunId && r.report && typeof r.report.score === "number",
+      (r) => r && r.runId !== currentRunId && isSucceeded(r.report) && r.report.metrics,
     )
     if (!prior) return null
-    return {
-      score: prior.report.score,
-      grade: prior.report.grade || null,
-      metrics: prior.report.metrics || null,
-    }
+    return { runId: prior.runId, metrics: prior.report.metrics }
   } catch (e) {
     core.warning(`baseline fetch failed (rendering without delta): ${e.message}`)
     return null
@@ -841,10 +802,10 @@ async function run({ core, github, context }) {
   const promptText = (last && last.prompt && last.prompt.text) || null
   const promptEndGoal = (last && last.prompt && last.prompt.endGoal) || null
 
-  // Baseline is meaningful only when we have a fresh score to diff against.
-  // Skip the extra round-trip on failed/superseded/timeout paths.
+  // Baseline metric deltas only make sense between two succeeded runs.
+  // Skip the extra round-trip on failed/superseded/timeout/DNF paths.
   const baseline =
-    finalStatus === "completed" && report && typeof report.score === "number"
+    finalStatus === "completed" && isSucceeded(report)
       ? await fetchBaseline(apiBase, apiKey, promptId, runId, core)
       : null
 
@@ -855,9 +816,7 @@ async function run({ core, github, context }) {
   core.setOutput("report-slug", (report && report.slug) || "")
   core.setOutput("report-url", (report && report.url) || "")
   core.setOutput("failure-reason", failureReason || "")
-  core.setOutput("score", (report && report.score != null) ? String(report.score) : "")
-  core.setOutput("grade", (report && report.grade) || "")
-  core.setOutput("baseline-score", (baseline && baseline.score != null) ? String(baseline.score) : "")
+  core.setOutput("outcome", (report && report.outcome) || "")
   core.setOutput("report-json", report ? JSON.stringify(report) : "")
   core.setOutput("baseline-json", baseline ? JSON.stringify(baseline) : "")
 
@@ -909,7 +868,8 @@ async function run({ core, github, context }) {
 module.exports = run
 module.exports.renderComment = renderComment
 module.exports.renderCommitStatus = renderCommitStatus
-module.exports.formatDelta = formatDelta
+module.exports.isSucceeded = isSucceeded
+module.exports.dnfMessage = dnfMessage
 module.exports.renderUrlMapBlockquoteLines = renderUrlMapBlockquoteLines
 module.exports.renderTemplateVarsBlockquoteLines = renderTemplateVarsBlockquoteLines
 module.exports.deriveDashboardUrl = deriveDashboardUrl

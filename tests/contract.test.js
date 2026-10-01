@@ -12,7 +12,7 @@ const OpenAPISampler = require("openapi-sampler")
 const {
   renderComment,
   renderCommitStatus,
-  formatDelta,
+  isSucceeded,
   renderUrlMapBlockquoteLines,
   renderTemplateVarsBlockquoteLines,
   deriveDashboardUrl,
@@ -43,6 +43,10 @@ function resolvePath(schema, path) {
       cur = refParts.reduce((o, k) => (o ? o[k] : undefined), spec)
       if (!cur) return undefined
     }
+    // Nullable objects arrive as anyOf/oneOf [object, null] — descend into
+    // the branch that actually declares properties.
+    const branches = cur.anyOf || cur.oneOf
+    if (!cur.properties && branches) cur = branches.find((b) => b.properties) || cur
     if (!cur.properties || !cur.properties[part]) return undefined
     cur = cur.properties[part]
   }
@@ -60,14 +64,14 @@ const RUN_FIELDS_THE_ACTION_READS = [
   "failureReason",
   // Prompt — for the comment heading
   "prompt.title",
-  // Report — for the score/grade/links section.
+  // Report — outcome drives success; url/slug for links.
   // Baseline is computed client-side by listing prior published runs (see
   // fetchBaseline + the /api/v1/runs filter test below), so it isn't a field
   // on the Run schema.
   "report.url",
   "report.slug",
-  "report.score",
-  "report.grade",
+  "report.outcome",
+  "report.nullNotice",
 ]
 
 test("Run schema declares every field the action reads", () => {
@@ -174,27 +178,67 @@ test("renderCommitStatus returns a valid commit-status state for every sampled s
   }
 })
 
-test("renderComment includes score+grade when the spec declares them and the sample populates them", () => {
-  const sample = sampleRun()
-  if (sample.report?.score == null || !sample.report?.grade) {
-    // Spec doesn't ship score/grade yet, or sampler emitted null report — skip,
-    // the schema-presence test above is the load-bearing gate.
-    return
-  }
-  const body = renderComment(renderArgsFromSample(sample, { status: "completed" }))
-  assert.match(body, new RegExp(String(sample.report.score)), "score must appear in completed comment")
-  const gradeEscaped = sample.report.grade.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-  assert.match(body, new RegExp(gradeEscaped), "grade must appear in completed comment")
+test("Run.report.outcome enum includes 'succeeded' (the only success value the action recognizes)", () => {
+  const outcome = resolvePath(spec.components.schemas.Run, "report.outcome")
+  const node = outcome && outcome.anyOf ? outcome.anyOf.find((n) => n.enum) : outcome
+  assert.ok(node && Array.isArray(node.enum), "report.outcome must be an enum")
+  assert.ok(node.enum.includes("succeeded"), `report.outcome enum missing 'succeeded': ${node.enum}`)
 })
 
-test("renderComment communicates 'Did not finish' when status=completed but score is null", () => {
+test("isSucceeded keys strictly on report.outcome === 'succeeded'", () => {
+  assert.equal(isSucceeded({ outcome: "succeeded" }), true)
+  for (const outcome of ["goal_not_met", "no_creds", "excluded", "scoring_failed", undefined, null, ""]) {
+    assert.equal(isSucceeded({ outcome }), false, `outcome=${outcome} must not count as success`)
+  }
+  assert.equal(isSucceeded(null), false)
+  assert.equal(isSucceeded(undefined), false)
+})
+
+test("renderComment + renderCommitStatus mark completed+succeeded as success", () => {
+  const report = { outcome: "succeeded", url: "https://x.dev/evals/acme/reports/abc" }
+  const body = renderComment({
+    status: "completed",
+    promptTitle: "Install MCP",
+    statusUrl: "https://x.dev/evals/api/v1/runs/abc",
+    report,
+    baseline: null,
+    failureReason: null,
+    sha: "abcdef1",
+    urlMapRaw: null,
+  })
+  assert.match(body, /\*\*Succeeded\*\*/)
+  assert.equal(/Did not finish/.test(body), false)
+  const cs = renderCommitStatus({ status: "completed", runUrl: "https://x/runs/abc", report, failureReason: null })
+  assert.equal(cs.state, "success")
+  assert.equal(cs.targetUrl, report.url)
+})
+
+test("renderCommitStatus marks every non-succeeded outcome as failure", () => {
+  for (const outcome of ["goal_not_met", "no_creds", "excluded", "scoring_failed"]) {
+    const cs = renderCommitStatus({
+      status: "completed",
+      runUrl: "https://x/runs/abc",
+      report: { outcome, nullNotice: `nulled: ${outcome}`, url: "https://x/r" },
+      failureReason: null,
+    })
+    assert.equal(cs.state, "failure", `outcome=${outcome}`)
+    assert.match(cs.description, new RegExp(`nulled: ${outcome}`))
+  }
+})
+
+test("renderCommitStatus marks completed with no report as failure", () => {
+  const cs = renderCommitStatus({ status: "completed", runUrl: "https://x/runs/abc", report: null, failureReason: null })
+  assert.equal(cs.state, "failure")
+  assert.match(cs.description, /Did not finish/)
+})
+
+test("renderComment communicates 'Did not finish' when status=completed but outcome is not succeeded", () => {
   const body = renderComment({
     status: "completed",
     promptTitle: "Install MCP",
     statusUrl: "https://x.dev/evals/api/v1/runs/abc",
     report: {
-      score: null,
-      grade: null,
+      outcome: "no_creds",
       url: "https://x.dev/evals/acme/reports/abc",
       keyFinding: "Google MFA/TOTP blocked API key retrieval and prevented task completion.",
       metrics: { time: "0m 16s", cost: "$0.26", errors: 0, interruptions: 1 },
@@ -206,15 +250,14 @@ test("renderComment communicates 'Did not finish' when status=completed but scor
   })
   assert.match(body, /Did not finish/)
   assert.match(body, /Google MFA\/TOTP blocked API key retrieval/)
-  assert.equal(/Eval complete/i.test(body), false, "must not read as success when score is null")
-  assert.equal(/\*\*[A-F][+-]? \d+\/100\*\*/.test(body), false, "must not show a grade/score header when score is null")
+  assert.equal(/Succeeded/.test(body), false, "must not read as success when outcome is not succeeded")
 })
 
-test("renderCommitStatus marks completed+null-score as failure with DNF explanation", () => {
+test("renderCommitStatus marks completed+goal_not_met as failure with DNF explanation", () => {
   const cs = renderCommitStatus({
     status: "completed",
     statusUrl: "https://x.dev/evals/api/v1/runs/abc",
-    report: { score: null, grade: null, keyFinding: "MFA blocked login.", url: "https://x.dev/evals/acme/reports/abc" },
+    report: { outcome: "goal_not_met", keyFinding: "MFA blocked login.", url: "https://x.dev/evals/acme/reports/abc" },
     failureReason: null,
   })
   assert.equal(cs.state, "failure")
@@ -253,7 +296,7 @@ test("renderComment neutralizes triple-backtick runs in server-supplied strings 
     status: "completed",
     promptTitle: "T",
     statusUrl: "https://x/api/v1/runs/a",
-    report: { score: null, grade: null, keyFinding: malicious, url: "https://x/r" },
+    report: { outcome: "goal_not_met", keyFinding: malicious, url: "https://x/r" },
     baseline: null,
     failureReason: null,
     sha: "abcdef1",
@@ -276,8 +319,7 @@ test("renderComment renders prompt.text in a default-closed <details> block on c
     statusUrl: "https://x.dev/evals/api/v1/runs/abc",
     runUrl: "https://x.dev/evals/acme/runs/abc",
     report: {
-      score: 87,
-      grade: "B+",
+      outcome: "succeeded",
       url: "https://x.dev/evals/acme/reports/abc",
       metrics: { time: "2m 14s", cost: "$0.12", errors: 0, interruptions: 0 },
     },
@@ -302,7 +344,7 @@ test("renderComment omits the <details> block when prompt.text is missing or emp
     promptTitle: "T",
     statusUrl: "https://x.dev/evals/api/v1/runs/abc",
     runUrl: "https://x.dev/evals/acme/runs/abc",
-    report: { score: 87, grade: "B+", url: "https://x.dev/evals/acme/reports/abc" },
+    report: { outcome: "succeeded", url: "https://x.dev/evals/acme/reports/abc" },
     baseline: null,
     failureReason: null,
     sha: "abcdef1",
@@ -429,17 +471,6 @@ test("renderCommitStatus uses runUrl as targetUrl when present", () => {
     failureReason: null,
   })
   assert.equal(cs.targetUrl, runUrl)
-})
-
-test("formatDelta is well-behaved for sane numeric inputs", () => {
-  assert.equal(formatDelta(0), "Same as baseline")
-  assert.equal(formatDelta(2.5), "+2.5 pts vs baseline")
-  assert.equal(formatDelta(-1), "-1 pts vs baseline")
-  assert.equal(formatDelta(0.04), "Same as baseline") // rounds to 0
-  for (const v of [0, 1, -1, 10.5, -10.5]) {
-    const out = formatDelta(v)
-    assert.ok(!out.includes("NaN") && !out.includes("undefined"), `formatDelta leaked junk for ${v}: ${out}`)
-  }
 })
 
 test("renderUrlMapBlockquoteLines survives malformed input", () => {
