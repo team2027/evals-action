@@ -85,7 +85,7 @@ jobs:
       statuses: write       # commit status check
     steps:
       - uses: actions/checkout@v6
-      - uses: team2027/evals-action@v0.2.0
+      - uses: team2027/evals-action@v0.8.0
         with:
           api-key: ${{ secrets.EVALS_API_KEY }}
           prompt-id: 12345678-1234-1234-1234-1234567890ab
@@ -113,7 +113,7 @@ jobs:
       statuses: write       # commit status check
     steps:
       - uses: actions/checkout@v6
-      - uses: team2027/evals-action@v0.2.0
+      - uses: team2027/evals-action@v0.8.0
         with:
           api-key: ${{ secrets.EVALS_API_KEY }}
           prompt-id: 12345678-1234-1234-1234-1234567890ab
@@ -145,7 +145,7 @@ jobs:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
           vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-      - uses: team2027/evals-action@v0.2.0
+      - uses: team2027/evals-action@v0.8.0
         with:
           api-key: ${{ secrets.EVALS_API_KEY }}
           prompt-id: 12345678-1234-1234-1234-1234567890ab
@@ -181,7 +181,7 @@ jobs:
       statuses: write
     steps:
       - uses: actions/checkout@v6
-      - uses: team2027/evals-action@v0.7.0
+      - uses: team2027/evals-action@v0.8.0
         with:
           api-key: ${{ secrets.EVALS_API_KEY }}
           prompt-id: 12345678-1234-1234-1234-1234567890ab
@@ -218,7 +218,7 @@ into the task), pass them via `template-vars`. `url-map` becomes optional —
 omit it for evals that don't target a web preview.
 
 ```yaml
-- uses: team2027/evals-action@v0.2.0
+- uses: team2027/evals-action@v0.8.0
   with:
     api-key: ${{ secrets.EVALS_API_KEY }}
     prompt-id: 12345678-1234-1234-1234-1234567890ab
@@ -304,11 +304,9 @@ simply nothing to supersede.
 | `report-slug` | Report slug if the run produced one, empty string otherwise |
 | `report-url` | Full URL to the dashboard report page, empty string if no report |
 | `failure-reason` | Server-provided failure reason if the run failed, empty string otherwise |
-| `score` | Final score (0-100) when the run produced a report, empty string otherwise |
-| `grade` | Final letter grade when the run produced a report, empty string otherwise |
-| `baseline-score` | Score of the most recent prior published report for the same prompt, empty string if no baseline |
-| `report-json` | Full report object as stringified JSON (`{slug, url, score, grade, metrics, dimensions}`). Forward-compatible — picks up new API fields without an action release. Empty string when no report. |
-| `baseline-json` | Baseline object as stringified JSON (`{score, grade}`). Empty string when no baseline. |
+| `outcome` | `report.outcome` when the run produced a report (`succeeded`, `goal_not_met`, `no_creds`, `excluded`, `scoring_failed`), empty string otherwise. Gate CI on `outcome == 'succeeded'`. |
+| `report-json` | Full report object as stringified JSON (`{slug, url, outcome, nullNotice, metrics, keyFinding, summary, …}`). Forward-compatible — picks up new API fields without an action release. Empty string when no report. |
+| `baseline-json` | Baseline object as stringified JSON (`{runId, metrics}`) from the most recent prior succeeded run. Empty string when no baseline. |
 
 ### Rendering your own comment
 
@@ -316,7 +314,7 @@ Set `skip-comment` and/or `skip-status` to `true` and consume the outputs from a
 
 ```yaml
 - id: eval
-  uses: team2027/evals-action@v0.2.0
+  uses: team2027/evals-action@v0.8.0
   with:
     api-key: ${{ secrets.EVALS_API_KEY }}
     prompt-id: 12345678-1234-1234-1234-1234567890ab
@@ -331,12 +329,11 @@ Set `skip-comment` and/or `skip-status` to `true` and consume the outputs from a
       const title = '${{ steps.eval.outputs.prompt-title }}'
       const reportUrl = '${{ steps.eval.outputs.report-url }}'
       const failure = '${{ steps.eval.outputs.failure-reason }}'
-      const score = '${{ steps.eval.outputs.score }}'
-      const grade = '${{ steps.eval.outputs.grade }}'
-      const baseline = '${{ steps.eval.outputs.baseline-score }}'
-      const delta = score && baseline ? ` (${Number(score) - Number(baseline) >= 0 ? '+' : ''}${Number(score) - Number(baseline)} vs baseline)` : ''
-      const body = status === 'completed' && reportUrl
-        ? `🎉 **${title}** — ${grade} ${score}/100${delta} → [report](${reportUrl})`
+      const outcome = '${{ steps.eval.outputs.outcome }}'
+      const body = status === 'completed' && outcome === 'succeeded'
+        ? `🎉 **${title}** succeeded → [report](${reportUrl})`
+        : status === 'completed'
+        ? `⚠️ **${title}** did not finish (${outcome || 'no report'})` + (reportUrl ? ` → [report](${reportUrl})` : '')
         : status === 'failed'
         ? `💥 **${title}** failed: ${failure}`
         : `⏱ **${title}** still running`
@@ -354,8 +351,10 @@ Set `skip-comment` and/or `skip-status` to `true` and consume the outputs from a
   `wait-timeout-minutes` budget expires. The PR comment and commit status
   are rendered inside the action from the response (`status`, `prompt.title`,
   optional `report`, optional `failureReason`).
-- On `completed` → commit status `success`, links to the report when
-  available, otherwise to the status page.
+- On `completed` → commit status `success` only when `report.outcome ===
+  "succeeded"`, linking to the report. Any other outcome (`goal_not_met`,
+  `no_creds`, `excluded`, `scoring_failed`) or a missing report → commit
+  status `failure` with the report's explanation (`keyFinding`, `nullNotice`, …).
 - On `failed` → commit status `error`, action fails the build with the
   server's `failureReason`.
 - On `superseded` → commit status `success` (a newer commit replaced this run).

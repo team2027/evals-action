@@ -105,7 +105,7 @@ test("POST /run body sends template values under the server's wire name `templat
   })
   const { captured, restore } = installFetch([
     { match: "/prompts/p-1/run", body: { runId: "r-1", statusUrl: "https://x/api/v1/runs/r-1", runUrl: "https://x/acme/runs/r-1" } },
-    { match: "/runs/r-1", body: { runId: "r-1", status: "completed", prompt: { title: "T" }, report: { score: 80, grade: "B" } } },
+    { match: "/runs/r-1", body: { runId: "r-1", status: "completed", prompt: { title: "T" }, report: { outcome: "succeeded" } } },
     { match: "/runs?promptId=", body: [] },
   ])
   t.after(restore)
@@ -139,7 +139,7 @@ test("POST /run body omits templateArgs when input is an empty object (validator
   })
   const { captured, restore } = installFetch([
     { match: "/prompts/p-1/run", body: { runId: "r-1", statusUrl: "https://x/api/v1/runs/r-1", runUrl: "https://x/acme/runs/r-1" } },
-    { match: "/runs/r-1", body: { runId: "r-1", status: "completed", prompt: { title: "T" }, report: { score: 80, grade: "B" } } },
+    { match: "/runs/r-1", body: { runId: "r-1", status: "completed", prompt: { title: "T" }, report: { outcome: "succeeded" } } },
     { match: "/runs?promptId=", body: [] },
   ])
   t.after(restore)
@@ -166,7 +166,7 @@ test("POST /run body omits templateArgs when input is empty (back-compat)", asyn
   })
   const { captured, restore } = installFetch([
     { match: "/prompts/p-1/run", body: { runId: "r-1", statusUrl: "https://x/api/v1/runs/r-1", runUrl: "https://x/acme/runs/r-1" } },
-    { match: "/runs/r-1", body: { runId: "r-1", status: "completed", prompt: { title: "T" }, report: { score: 80, grade: "B" } } },
+    { match: "/runs/r-1", body: { runId: "r-1", status: "completed", prompt: { title: "T" }, report: { outcome: "succeeded" } } },
     { match: "/runs?promptId=", body: [] },
   ])
   t.after(restore)
@@ -193,7 +193,7 @@ test("template-vars accepts empty url-map (CLI / non-URL evals)", async (t) => {
   })
   const { captured, restore } = installFetch([
     { match: "/prompts/p-1/run", body: { runId: "r-1", statusUrl: "https://x/api/v1/runs/r-1", runUrl: "https://x/acme/runs/r-1" } },
-    { match: "/runs/r-1", body: { runId: "r-1", status: "completed", prompt: { title: "T" }, report: { score: 80, grade: "B" } } },
+    { match: "/runs/r-1", body: { runId: "r-1", status: "completed", prompt: { title: "T" }, report: { outcome: "succeeded" } } },
     { match: "/runs?promptId=", body: [] },
   ])
   t.after(restore)

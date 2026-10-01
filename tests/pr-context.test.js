@@ -87,7 +87,7 @@ const BASE_ENV = {
 
 const COMPLETED_RUN = {
   match: "/runs/r-1",
-  body: { runId: "r-1", status: "completed", prompt: { title: "T" }, report: { score: 80, grade: "B" } },
+  body: { runId: "r-1", status: "completed", prompt: { title: "T" }, report: { outcome: "succeeded" } },
 }
 const START_OK = {
   match: "/prompts/p-1/run",

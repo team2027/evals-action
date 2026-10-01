@@ -1,145 +1,92 @@
 # Completed
 
-Terminal success state. The comment shape adapts to which fields the API
-returned on `GET /api/v1/runs/:id` and whether a baseline run exists.
+Terminal state. Success is keyed on `report.outcome === "succeeded"` — the
+only value that turns the commit status green. Every other outcome
+(`goal_not_met`, `no_creds`, `excluded`, `scoring_failed`) or a missing
+report renders as **Did not finish** and sets the commit status to `failure`.
 
 ## Sections (in order, each optional)
 
-1. Heading
-2. Status line — bold `grade (score/100)` when present, else `Eval complete`
-3. Score delta vs baseline (only when both `score` and `baseline.score` are present)
-4. Metrics line — `Time · Cost · Errors · Interruptions`, with deltas in parens when baseline metrics exist
-5. Prompt body — default-closed `<details><summary>prompt</summary>` block carrying `prompt.text` verbatim. Omitted when the API doesn't return a prompt body.
-6. Mapping blockquote — one line per template-var (`> {{name}} → \`value\``) followed by one line per url-map entry (`> domain → \`previewHost\``). Omitted entirely when both maps are empty.
-7. `Commit:` short SHA
-8. Link row — `[View report →] · [Dashboard]`
+1. Heading — `**Succeeded**` or `Did not finish`
+2. DNF reason (only when not succeeded) — first of `keyFinding`, `summary.whatDidnt`, `nullNotice`, `verdict`, `failureReason`, then the raw outcome
+3. Metrics table — `Time | Cost | Errors | Interruptions`, with ▲/▼ deltas vs the most recent prior succeeded run for the same prompt
+4. Prompt body — default-closed `<details><summary>prompt</summary>` block carrying `prompt.text`
+5. Mapping blockquote — template-var lines, then url-map lines. Omitted when both are empty.
+6. Footer — short SHA · `[View report →]` · `[Dashboard]`
 
 ---
 
-## Rich: score + baseline + metrics + url-map
+## Succeeded, with baseline
 
-The full layout. Everything optional rendered.
+````markdown
+### 2027 // Sign up and create a project — **Succeeded**
 
-```markdown
-## 2027 AX Eval — Sign up and create a project
-
-✅ **B+ (87/100)**
-
-+5 pts vs baseline
-
-Time: 2m 14s (+14s) · Cost: $0.12 (-$0.03) · Errors: 1 (+1) · Interruptions: 0
+| Time | Cost | Errors | Interruptions |
+| --- | --- | --- | --- |
+| 2m 14s  ▲ +14s | $0.12  ▼ -$0.03 | 1  ▲ +1 | 0 |
 
 <details><summary>prompt</summary>
 
-Sign up for an account at acme.com, create a new project named "demo", and
-copy the generated API key from the project settings page.
+Sign up at acme.com, create a project named "demo", and copy the API key.
 
 </details>
 
 > acme.com → `preview-pr-42.fly.dev`
 
-Commit: `a1b2c3d`
+Commit `a1b2c3d`  ·  [View report →](https://2027.dev/evals/acme.com/reports/abc123)  ·  [Dashboard](https://2027.dev/evals/acme.com)
+````
 
-[View report →](https://2027.dev/evals/acme.com/reports/abc123) · [Dashboard](https://2027.dev/evals/acme.com)
-```
+## Succeeded, first run for this prompt
 
-Notes on the metrics line:
+The baseline lookup (`GET /api/v1/runs?promptId=…&reportStatus=published`, paged newest-first)
+found no prior succeeded run with metrics, so no arrows render.
 
-- `Time` / `Cost` use the API's display strings (`"2m 14s"`, `"$0.12"`).
-- Deltas are computed from `timeSeconds` / `costUsd` (numeric) for accuracy.
-- Sub-half-cent and zero-second deltas are suppressed.
-- `Errors` and `Interruptions` only show a delta when non-zero — `0 → 0` renders as `Interruptions: 0` with no parens.
+````markdown
+### 2027 // Sign up and create a project — **Succeeded**
 
----
+| Time | Cost | Errors | Interruptions |
+| --- | --- | --- | --- |
+| 2m 14s | $0.12 | 1 | 0 |
 
-## No baseline — first run for this prompt
+<details><summary>prompt</summary>
 
-The baseline lookup (`GET /api/v1/runs?promptId=…&reportStatus=published&limit=2`)
-returned no prior runs. Delta lines disappear; current-state values still
-render so the metrics line stays informative.
+Sign up at acme.com, create a project named "demo", and copy the API key.
 
-```markdown
-## 2027 AX Eval — Sign up and create a project
-
-✅ **B+ (87/100)**
-
-Time: 2m 14s · Cost: $0.12 · Errors: 1 · Interruptions: 0
+</details>
 
 > acme.com → `preview-pr-42.fly.dev`
 
-Commit: `a1b2c3d`
+Commit `a1b2c3d`  ·  [View report →](https://2027.dev/evals/acme.com/reports/abc123)  ·  [Dashboard](https://2027.dev/evals/acme.com)
+````
 
-[View report →](https://2027.dev/evals/acme.com/reports/abc123) · [Dashboard](https://2027.dev/evals/acme.com)
+## Did not finish
+
+````markdown
+### 2027 // Sign up and create a project — Did not finish
+
+```diff
+- ⚠️ Score nulled: AI judge determined the task was not completed.
 ```
 
----
+| Time | Cost | Errors | Interruptions |
+| --- | --- | --- | --- |
+| 2m 14s | $0.12 | 1 | 0 |
 
-## Baseline but no metrics
+<details><summary>prompt</summary>
 
-API returned `report.score` / `report.grade` but `report.metrics` is null
-(legacy run, or metrics not yet computed). Score delta still renders;
-metrics line is omitted entirely.
+Sign up at acme.com, create a project named "demo", and copy the API key.
 
-```markdown
-## 2027 AX Eval — Sign up and create a project
-
-✅ **B+ (87/100)**
-
-+5 pts vs baseline
+</details>
 
 > acme.com → `preview-pr-42.fly.dev`
 
-Commit: `a1b2c3d`
-
-[View report →](https://2027.dev/evals/acme.com/reports/abc123) · [Dashboard](https://2027.dev/evals/acme.com)
-```
-
----
-
-## Minimal fallback — no score / grade
-
-API returned `report.url` but no `score` / `grade` (e.g., older API version,
-or report wasn't scored). The bold header reverts to generic `Eval complete`;
-all the report-link plumbing still renders.
-
-```markdown
-## 2027 AX Eval — Sign up and create a project
-
-✅ Eval complete
-
-> acme.com → `preview-pr-42.fly.dev`
-
-Commit: `a1b2c3d`
-
-[View report →](https://2027.dev/evals/acme.com/reports/abc123) · [Dashboard](https://2027.dev/evals/acme.com)
-```
-
----
-
-## Template-vars prompt — no `url-map`, just per-PR template args
-
-CLI / non-URL evals pass `template-vars` instead of a `url-map`. The
-blockquote then carries only the template-var lines.
-
-```markdown
-## 2027 AX Eval — Install the Sanity CLI
-
-✅ **A- (91/100)**
-
-> {{cliInstall}} → `npm i -g https://pkg.pr.new/team2027/sanity-cli/@sanity/cli@1ca9807`
-
-Commit: `a1b2c3d`
-
-[View report →](https://2027.dev/evals/sanity/reports/xyz) · [Dashboard](https://2027.dev/evals/sanity)
-```
+Commit `a1b2c3d`  ·  [View report →](https://2027.dev/evals/acme.com/reports/abc123)  ·  [Dashboard](https://2027.dev/evals/acme.com)
+````
 
 ---
 
 ## Cross-cutting rules
 
 - Dashboard URL is derived by trimming `/reports/<slug>` (and any trailing slash) off `report.url`.
-- The mapping blockquote renders in both the `running` and `completed` comments. Template-var lines appear first, then url-map lines, all inside a single blockquote.
-- Same-as-baseline (zero score delta) collapses the delta line to "Same as baseline".
-- Negative deltas use `-N pts vs baseline`.
-- Empty `url-map` entries are filtered out before rendering. If both maps are empty / null / unparseable, the blockquote is omitted entirely.
-- Template-var values longer than 80 characters are truncated with an ellipsis so the line stays readable on a PR page.
+- Metric deltas are computed from `timeSeconds` / `costUsd` (numeric); sub-half-cent and zero deltas are suppressed.
+- Template-var values longer than 80 characters are truncated with an ellipsis.
