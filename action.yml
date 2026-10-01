@@ -65,7 +65,7 @@ outputs:
   failure-reason:
     description: Server-provided failure reason if the run failed, empty string otherwise
   outcome:
-    description: "report.outcome when the run produced a report ('succeeded', 'goal_not_met', 'no_creds', 'excluded', 'scoring_failed'), empty string otherwise. Only 'succeeded' sets the commit status to success."
+    description: "report.outcome when the run produced a report ('succeeded', 'goal_not_met', 'no_creds', 'excluded', 'scoring_failed'), empty string otherwise. For completed runs, only 'succeeded' sets the commit status to success (superseded runs and the default timeout path also report success, independent of outcome)."
   report-json:
     description: Full report object as stringified JSON (slug, url, outcome, nullNotice, metrics, keyFinding, summary, ...). Empty string if no report. Forward-compatible — picks up any new fields the API adds without an action release.
   baseline-json:

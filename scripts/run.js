@@ -493,19 +493,26 @@ function extractPrFromContext(context) {
 }
 
 // Baseline is computed client-side from the runs-list endpoint instead of
-// being returned on the run response. We pick the most recent prior
-// published run for the same prompt; the current run is filtered out by id
-// because it may already be in the published list by the time we fetch.
+// being returned on the run response. We page newest-first through published
+// runs for the same prompt until we hit a prior succeeded run with metrics;
+// the current run is filtered out by id because it may already be listed.
+const BASELINE_PAGE_SIZE = 20
+const BASELINE_MAX_PAGES = 5
 async function fetchBaseline(apiBase, apiKey, promptId, currentRunId, core) {
-  const url = `${apiBase}/api/v1/runs?promptId=${encodeURIComponent(promptId)}&reportStatus=published&limit=2`
   try {
-    const list = await getJson(url, apiKey)
-    if (!Array.isArray(list)) return null
-    const prior = list.find(
-      (r) => r && r.runId !== currentRunId && isSucceeded(r.report) && r.report.metrics,
-    )
-    if (!prior) return null
-    return { runId: prior.runId, metrics: prior.report.metrics }
+    for (let page = 0; page < BASELINE_MAX_PAGES; page++) {
+      const url =
+        `${apiBase}/api/v1/runs?promptId=${encodeURIComponent(promptId)}&reportStatus=published` +
+        `&limit=${BASELINE_PAGE_SIZE}&offset=${page * BASELINE_PAGE_SIZE}`
+      const list = await getJson(url, apiKey)
+      if (!Array.isArray(list)) return null
+      const prior = list.find(
+        (r) => r && r.runId !== currentRunId && isSucceeded(r.report) && r.report.metrics,
+      )
+      if (prior) return { runId: prior.runId, metrics: prior.report.metrics }
+      if (list.length < BASELINE_PAGE_SIZE) return null
+    }
+    return null
   } catch (e) {
     core.warning(`baseline fetch failed (rendering without delta): ${e.message}`)
     return null
@@ -870,6 +877,7 @@ module.exports.renderComment = renderComment
 module.exports.renderCommitStatus = renderCommitStatus
 module.exports.isSucceeded = isSucceeded
 module.exports.dnfMessage = dnfMessage
+module.exports.fetchBaseline = fetchBaseline
 module.exports.renderUrlMapBlockquoteLines = renderUrlMapBlockquoteLines
 module.exports.renderTemplateVarsBlockquoteLines = renderTemplateVarsBlockquoteLines
 module.exports.deriveDashboardUrl = deriveDashboardUrl

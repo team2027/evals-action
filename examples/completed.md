@@ -18,7 +18,7 @@ report renders as **Did not finish** and sets the commit status to `failure`.
 
 ## Succeeded, with baseline
 
-```markdown
+````markdown
 ### 2027 // Sign up and create a project — **Succeeded**
 
 | Time | Cost | Errors | Interruptions |
@@ -34,14 +34,14 @@ Sign up at acme.com, create a project named "demo", and copy the API key.
 > acme.com → `preview-pr-42.fly.dev`
 
 Commit `a1b2c3d`  ·  [View report →](https://2027.dev/evals/acme.com/reports/abc123)  ·  [Dashboard](https://2027.dev/evals/acme.com)
-```
+````
 
 ## Succeeded, first run for this prompt
 
-The baseline lookup (`GET /api/v1/runs?promptId=…&reportStatus=published&limit=2`)
+The baseline lookup (`GET /api/v1/runs?promptId=…&reportStatus=published`, paged newest-first)
 found no prior succeeded run with metrics, so no arrows render.
 
-```markdown
+````markdown
 ### 2027 // Sign up and create a project — **Succeeded**
 
 | Time | Cost | Errors | Interruptions |
@@ -57,11 +57,11 @@ Sign up at acme.com, create a project named "demo", and copy the API key.
 > acme.com → `preview-pr-42.fly.dev`
 
 Commit `a1b2c3d`  ·  [View report →](https://2027.dev/evals/acme.com/reports/abc123)  ·  [Dashboard](https://2027.dev/evals/acme.com)
-```
+````
 
 ## Did not finish
 
-```markdown
+````markdown
 ### 2027 // Sign up and create a project — Did not finish
 
 ```diff
@@ -81,7 +81,7 @@ Sign up at acme.com, create a project named "demo", and copy the API key.
 > acme.com → `preview-pr-42.fly.dev`
 
 Commit `a1b2c3d`  ·  [View report →](https://2027.dev/evals/acme.com/reports/abc123)  ·  [Dashboard](https://2027.dev/evals/acme.com)
-```
+````
 
 ---
 

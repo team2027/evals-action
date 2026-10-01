@@ -85,7 +85,7 @@ jobs:
       statuses: write       # commit status check
     steps:
       - uses: actions/checkout@v6
-      - uses: team2027/evals-action@v0.2.0
+      - uses: team2027/evals-action@v0.8.0
         with:
           api-key: ${{ secrets.EVALS_API_KEY }}
           prompt-id: 12345678-1234-1234-1234-1234567890ab
@@ -113,7 +113,7 @@ jobs:
       statuses: write       # commit status check
     steps:
       - uses: actions/checkout@v6
-      - uses: team2027/evals-action@v0.2.0
+      - uses: team2027/evals-action@v0.8.0
         with:
           api-key: ${{ secrets.EVALS_API_KEY }}
           prompt-id: 12345678-1234-1234-1234-1234567890ab
@@ -145,7 +145,7 @@ jobs:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
           vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-      - uses: team2027/evals-action@v0.2.0
+      - uses: team2027/evals-action@v0.8.0
         with:
           api-key: ${{ secrets.EVALS_API_KEY }}
           prompt-id: 12345678-1234-1234-1234-1234567890ab
@@ -181,7 +181,7 @@ jobs:
       statuses: write
     steps:
       - uses: actions/checkout@v6
-      - uses: team2027/evals-action@v0.7.0
+      - uses: team2027/evals-action@v0.8.0
         with:
           api-key: ${{ secrets.EVALS_API_KEY }}
           prompt-id: 12345678-1234-1234-1234-1234567890ab
@@ -218,7 +218,7 @@ into the task), pass them via `template-vars`. `url-map` becomes optional —
 omit it for evals that don't target a web preview.
 
 ```yaml
-- uses: team2027/evals-action@v0.2.0
+- uses: team2027/evals-action@v0.8.0
   with:
     api-key: ${{ secrets.EVALS_API_KEY }}
     prompt-id: 12345678-1234-1234-1234-1234567890ab
@@ -314,7 +314,7 @@ Set `skip-comment` and/or `skip-status` to `true` and consume the outputs from a
 
 ```yaml
 - id: eval
-  uses: team2027/evals-action@v0.2.0
+  uses: team2027/evals-action@v0.8.0
   with:
     api-key: ${{ secrets.EVALS_API_KEY }}
     prompt-id: 12345678-1234-1234-1234-1234567890ab
@@ -333,7 +333,7 @@ Set `skip-comment` and/or `skip-status` to `true` and consume the outputs from a
       const body = status === 'completed' && outcome === 'succeeded'
         ? `🎉 **${title}** succeeded → [report](${reportUrl})`
         : status === 'completed'
-        ? `⚠️ **${title}** did not finish (${outcome || 'no report'}) → [report](${reportUrl})`
+        ? `⚠️ **${title}** did not finish (${outcome || 'no report'})` + (reportUrl ? ` → [report](${reportUrl})` : '')
         : status === 'failed'
         ? `💥 **${title}** failed: ${failure}`
         : `⏱ **${title}** still running`

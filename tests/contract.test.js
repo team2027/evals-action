@@ -13,6 +13,7 @@ const {
   renderComment,
   renderCommitStatus,
   isSucceeded,
+  fetchBaseline,
   renderUrlMapBlockquoteLines,
   renderTemplateVarsBlockquoteLines,
   deriveDashboardUrl,
@@ -32,21 +33,23 @@ test.before(async () => {
   spec = await res.json()
 })
 
+function deref(node) {
+  if (!node || !node.$ref) return node
+  return node.$ref.replace(/^#\//, "").split("/").reduce((o, k) => (o ? o[k] : undefined), spec)
+}
+
 // Follow a dotted path through an OpenAPI schema, resolving $ref as we go.
 // Returns the schema node at the path, or undefined.
 function resolvePath(schema, path) {
   let cur = schema
   for (const part of path.split(".")) {
     if (!cur) return undefined
-    if (cur.$ref) {
-      const refParts = cur.$ref.replace(/^#\//, "").split("/")
-      cur = refParts.reduce((o, k) => (o ? o[k] : undefined), spec)
-      if (!cur) return undefined
-    }
+    cur = deref(cur)
+    if (!cur) return undefined
     // Nullable objects arrive as anyOf/oneOf [object, null] — descend into
     // the branch that actually declares properties.
     const branches = cur.anyOf || cur.oneOf
-    if (!cur.properties && branches) cur = branches.find((b) => b.properties) || cur
+    if (!cur.properties && branches) cur = branches.map(deref).find((b) => b && b.properties) || cur
     if (!cur.properties || !cur.properties[part]) return undefined
     cur = cur.properties[part]
   }
@@ -183,6 +186,39 @@ test("Run.report.outcome enum includes 'succeeded' (the only success value the a
   const node = outcome && outcome.anyOf ? outcome.anyOf.find((n) => n.enum) : outcome
   assert.ok(node && Array.isArray(node.enum), "report.outcome must be an enum")
   assert.ok(node.enum.includes("succeeded"), `report.outcome enum missing 'succeeded': ${node.enum}`)
+})
+
+test("resolvePath descends into nullable unions whose object branch is a $ref", () => {
+  spec.components.schemas.__RefTarget = { type: "object", properties: { inner: { type: "string" } } }
+  try {
+    const schema = { type: "object", properties: { wrap: { anyOf: [{ $ref: "#/components/schemas/__RefTarget" }, { type: "null" }] } } }
+    assert.ok(resolvePath(schema, "wrap.inner"), "wrap.inner must resolve through anyOf [$ref, null]")
+  } finally {
+    delete spec.components.schemas.__RefTarget
+  }
+})
+
+test("fetchBaseline pages past non-succeeded runs to find a prior succeeded run with metrics", async () => {
+  const pageSize = 20
+  const filler = (i) => ({ runId: `r-${i}`, report: { outcome: "goal_not_met", metrics: { errors: 1 } } })
+  const pages = [
+    [{ runId: "current", report: { outcome: "succeeded", metrics: { errors: 0 } } }, ...Array.from({ length: pageSize - 1 }, (_, i) => filler(i))],
+    [filler(99), { runId: "prior", report: { outcome: "succeeded", metrics: { errors: 2 } } }],
+  ]
+  const urls = []
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async (url) => {
+    urls.push(String(url))
+    const offset = Number(new URL(url).searchParams.get("offset"))
+    return new Response(JSON.stringify(pages[offset / pageSize] || []), { status: 200, headers: { "content-type": "application/json" } })
+  }
+  try {
+    const baseline = await fetchBaseline("https://x.dev/evals", "k", "p-1", "current", { warning() {} })
+    assert.deepEqual(baseline, { runId: "prior", metrics: { errors: 2 } })
+    assert.equal(urls.length, 2, "must stop paging once a baseline is found")
+  } finally {
+    globalThis.fetch = realFetch
+  }
 })
 
 test("isSucceeded keys strictly on report.outcome === 'succeeded'", () => {
